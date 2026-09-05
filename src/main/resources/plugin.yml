@@ -1,0 +1,86 @@
+name: NoLag
+version: 21.5.7
+main: me.nolag.NoLag
+api-version: "1.20"
+author: VoidOaz
+description: "Ultimate server optimization suite for Paper & Folia (1.20.6 - 1.21.11)."
+
+load: POSTWORLD
+
+softdepend: [PlaceholderAPI, Vault, WorldEdit, WorldGuard]
+
+commands:
+  nolag:
+    description: "Main command for NoLag-Ultimate management and diagnostics."
+    usage: "/nolag <reload|cleanup|tps|dashboard|stats|version>"
+    aliases: [nl, lag, antilag]
+    permission: nolag.use
+
+permissions:
+  nolag.use:
+    description: "Allows access to basic NoLag commands."
+    default: true
+
+  nolag.admin:
+    description: "Allows access to all NoLag administrative features."
+    default: op
+    children:
+      nolag.reload: true
+      nolag.cleanup: true
+      nolag.tps: true
+      nolag.dashboard: true
+      nolag.unstack: true
+      nolag.commandfilter.bypass: true
+      nolag.commandfilter.notify: true
+      nolag.elytra.bypass: true
+      nolag.unsafe.bypass: true
+      nolag.armorstand.bypass: true
+      nolag.tnt.bypass: true
+
+  nolag.reload:
+    description: "Allows reloading NoLag configuration."
+    default: op
+
+  nolag.cleanup:
+    description: "Allows manual cleanup trigger."
+    default: op
+
+  nolag.tps:
+    description: "Allows viewing live TPS and MSPT."
+    default: op
+
+  nolag.dashboard:
+    description: "Allows opening the performance dashboard GUI."
+    default: op
+
+  nolag.unstack:
+    description: "Allows unstacking mobs by shift+right-click."
+    default: op
+
+  nolag.commandfilter.bypass:
+    description: "Bypass command filtering restrictions."
+    default: op
+
+  nolag.commandfilter.notify:
+    description: "Receive notifications when players attempt blocked commands."
+    default: op
+
+  nolag.elytra.bypass:
+    description: "Bypass elytra restrictions during low TPS."
+    default: op
+
+  nolag.unsafe.bypass:
+    description: "Bypass all unsafe action restrictions."
+    default: op
+
+  nolag.armorstand.bypass:
+    description: "Bypass armor stand placement limits."
+    default: op
+
+  nolag.tnt.bypass:
+    description: "Bypass TNT chain reaction protection."
+    default: op
+
+channels:
+  - "BungeeCord"
+  - "nolag:main"

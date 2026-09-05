@@ -1,0 +1,146 @@
+# ==========================================================
+#                  NoLag-Ultimate Configuration
+#                      Version 21.5.7
+#      Compatible with Minecraft 1.20.6 - 1.21.x (Paper/Folia)
+# ==========================================================
+
+settings:
+  # General cleanup interval in minutes
+  cleanup-interval: 5
+  # Emergency cleanup threshold (Starts automatic cleanup if TPS drops below this)
+  tps-threshold: 16.0
+  # Cooldown in seconds between automatic emergency cleanups to prevent spam
+  emergency-cleanup-cooldown: 60
+  # Maximum redstone updates per block per 2 seconds before the clock is suppressed
+  max-redstone-updates: 20
+  # Max armor stands allowed per chunk
+  armor-stand-limit-per-chunk: 15
+  # Enable debug logging (verbose console output)
+  debug: false
+
+  # Dynamic View Distance range
+  view-distance:
+    min: 4
+    max: 8
+
+features:
+  # Basic cleanup toggle settings
+  remove-items: true
+  remove-mobs: false
+
+  # Protection and anti-lag modules
+  anti-lag-machine: true
+  armor-stand-limiter: true
+  tnt-protection: true
+
+  # Prevents server crashes caused by massive TNT chain reactions
+  anti-tnt-chain: true
+
+  # Core Optimization Module toggles
+  fast-leaf-decay: true
+  item-stacker: true
+  void-teleport: true
+  hopper-throttling: true
+  dynamic-view-distance: true
+
+  # Smart Mob Stacker (Merges identical entities using PersistentDataContainer)
+  mob-stacker:
+    enabled: true
+    # Maximum number of entities in a single stack
+    max-stack-size: 50
+    # Minimum count of same-type mobs in a single chunk to trigger stacking
+    min-mobs-to-stack: 8
+    # Radius in blocks to search for identical mobs
+    radius: 5.0
+    # Interval in minutes to perform the background stacking check
+    check-interval: 3
+
+# Advanced Performance Settings
+advanced-optimization:
+  # Command filtering to prevent lag-inducing or crash commands
+  command-filter:
+    enabled: true
+    # Notify admins when a player attempts a blocked command
+    notify-admins: true
+    # Admin notification message
+    admin-notify-message: "&e[NoLag] Player &c{player} &etried to use restricted command: &c/{command}"
+    # Message shown to the player when command is blocked
+    message: "&cThis command is restricted due to server lag and stability risk!"
+    # List of commands that are restricted during low performance or for security
+    blocked-commands:
+      - "fill"
+      - "setblock"
+      - "clone"
+      - "worldedit"
+      - "calc"
+      - "eval"
+      - "solve"
+      - "reload"
+      - "kill"
+
+  # TPS threshold to freeze physics (Sand, Gravel, Water, Lava, Redstone, Concrete Powder) to prevent crashes
+  physics-freeze-tps: 15.0
+
+  # Disable Elytra flight temporarily when the server is lagging heavily
+  elytra-protection:
+    enabled: true
+    # TPS threshold to disable new elytra flights
+    tps-threshold: 15.0
+    # Message shown when elytra is disabled
+    message: "&cElytra is disabled due to low server performance! (TPS: {tps})"
+
+  # Hopper transfer throttling based on server health
+  hopper:
+    # TPS threshold for heavy throttling (75% chance to skip transfer)
+    heavy-throttling-tps: 14.0
+    # TPS threshold for light throttling (40% chance to skip transfer)
+    light-throttling-tps: 16.0
+
+# TNT Protection Module Settings
+tnt-protection:
+  # Maximum active primed TNT allowed per chunk
+  max-primed-tnt-per-chunk: 25
+  # Disable fire spread caused by explosions
+  disable-explosion-fire: true
+  # Minimum number of blocks affected to disable item drops
+  yield-zero-threshold: 50
+  # Item drop rate when threshold is exceeded (0.0 = no drops, 0.5 = half drops)
+  yield-zero-value: 0.0
+
+# General Optimization Module
+optimization:
+  # Entity Activation Range (disables AI for mobs far from players when TPS is low)
+  activation-range:
+    enabled: true
+    # Range in blocks (mobs beyond this distance have AI disabled during lag)
+    range: 48
+
+  # Chunk Cleaner (unloads empty, non-ticking, non-force-loaded chunks)
+  chunk-cleaner:
+    enabled: true
+    # Interval in minutes to scan for inactive chunks
+    interval-minutes: 8
+
+# Atlas Performance Diagnostics
+atlas:
+  # Tick duration threshold to log lag spikes (in milliseconds, 0 = disabled)
+  lag-spike-threshold-ms: 150
+  # Emergency MSPT threshold (stops non-player entity spawning when exceeded)
+  emergency-mspt: 55.0
+
+announcements:
+  # Broadcast messages for the scheduled cleanup countdown
+  five-minutes: "&8[&6NoLag&8] &eGround items will be cleared in &65 minutes&e!"
+  two-minutes: "&8[&6NoLag&8] &eGround items will be cleared in &62 minutes&e!"
+  one-minute: "&8[&6NoLag&8] &eGround items will be cleared in &61 minute&e!"
+  thirty-seconds: "&8[&6NoLag&8] &cGround items will be cleared in &430 seconds&e!"
+  ten-seconds: "&8[&6NoLag&8] &cGround items will be cleared in &410 seconds&e!"
+
+messages:
+  prefix: "&8[&6NoLag&8] &r"
+  reload-success: "&aConfiguration successfully reloaded!"
+  no-permission: "&cYou do not have permission to use this command!"
+  armor-limit-reached: "&cThis chunk has reached the Armor Stand limit (%limit%)!"
+  low-tps-warning: "&4&lWARNING! &cLow TPS detected (&e%tps%&c). Emergency cleanup starting..."
+  mob-separated: "&8[&6NoLag&8] &7- One mob separated! Remaining: &e%amount%"
+  lag-machine-cleared: "&c[NoLag] Lag machine detected and suppressed!"
