@@ -36,6 +36,12 @@ features:
   # Prevents server crashes caused by massive TNT chain reactions
   anti-tnt-chain: true
 
+  # Nether chunk loading protection (2B2T-style roof flying exploit prevention)
+  nether-chunk-protection: true
+
+  # Fluid flooding protection (water/lava/ice abuse prevention)
+  fluid-flood-protection: true
+
   # Core Optimization Module toggles
   fast-leaf-decay: true
   item-stacker: true
@@ -144,3 +150,7 @@ messages:
   low-tps-warning: "&4&lWARNING! &cLow TPS detected (&e%tps%&c). Emergency cleanup starting..."
   mob-separated: "&8[&6NoLag&8] &7- One mob separated! Remaining: &e%amount%"
   lag-machine-cleared: "&c[NoLag] Lag machine detected and suppressed!"
+  nether-chunk-warning: "&eRapid chunk loading detected. Please reduce speed."
+  nether-chunk-speed-reduced: "&cSpeed reduced due to excessive chunk loading!"
+  fluid-flood-warning: "&eRapid fluid placement detected. Please slow down."
+  fluid-flood-blocked: "&cToo many fluid placements! Wait a moment."
