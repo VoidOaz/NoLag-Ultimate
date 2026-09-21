@@ -1,9 +1,9 @@
 name: NoLag
-version: 21.5.7
+version: 21.5.8
 main: me.nolag.NoLag
 api-version: "1.20"
 author: VoidOaz
-description: "Ultimate server optimization suite for Paper & Folia (1.20.6 - 1.21.11)."
+description: "Ultimate server optimization suite for Paper & Folia (1.20.6 - 1.21.x)."
 
 load: POSTWORLD
 
@@ -36,6 +36,8 @@ permissions:
       nolag.unsafe.bypass: true
       nolag.armorstand.bypass: true
       nolag.tnt.bypass: true
+      nolag.netherchunk.bypass: true
+      nolag.flood.bypass: true
 
   nolag.reload:
     description: "Allows reloading NoLag configuration."
@@ -79,6 +81,14 @@ permissions:
 
   nolag.tnt.bypass:
     description: "Bypass TNT chain reaction protection."
+    default: op
+
+  nolag.netherchunk.bypass:
+    description: "Bypass Nether chunk loading protection."
+    default: op
+
+  nolag.flood.bypass:
+    description: "Bypass fluid flood protection."
     default: op
 
 channels:

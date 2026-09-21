@@ -6,10 +6,12 @@ import com.google.common.io.ByteStreams;
 import me.nolag.commands.NoLagCommand;
 import me.nolag.gui.DashboardGUI;
 import me.nolag.modules.armorstand.ArmorStandModule;
+import me.nolag.modules.antiexploit.NetherChunkProtectionModule;
 import me.nolag.modules.chunk.ChunkOptimizationModule;
 import me.nolag.modules.cleanup.CleanupManager;
 import me.nolag.modules.command.CommandSecurityModule;
 import me.nolag.modules.entity.EntityAIOptimizationModule;
+import me.nolag.modules.flood.FluidFloodProtectionModule;
 import me.nolag.modules.hopper.HopperOptimizationModule;
 import me.nolag.modules.item.ItemStackerModule;
 import me.nolag.modules.mobstacker.MobStackerModule;
@@ -40,6 +42,8 @@ public final class NoLag extends JavaPlugin {
     private CommandSecurityModule commandSecurityModule;
     private EntityAIOptimizationModule entityAIModule;
     private DashboardGUI dashboardGUI;
+    private NetherChunkProtectionModule netherChunkModule;
+    private FluidFloodProtectionModule fluidFloodModule;
 
     @Override
     public void onEnable() {
@@ -73,6 +77,8 @@ public final class NoLag extends JavaPlugin {
         this.commandSecurityModule = new CommandSecurityModule(this);
         this.entityAIModule = new EntityAIOptimizationModule(this);
         this.dashboardGUI = new DashboardGUI(this);
+        this.netherChunkModule = new NetherChunkProtectionModule(this);
+        this.fluidFloodModule = new FluidFloodProtectionModule(this);
 
         // 5. Register Event Listeners
         var pm = getServer().getPluginManager();
@@ -87,6 +93,8 @@ public final class NoLag extends JavaPlugin {
         pm.registerEvents(commandSecurityModule, this);
         pm.registerEvents(entityAIModule, this);
         pm.registerEvents(dashboardGUI, this);
+        pm.registerEvents(netherChunkModule, this);
+        pm.registerEvents(fluidFloodModule, this);
 
         // 6. Register Commands and Channels
         PluginCommand cmd = getCommand("nolag");
@@ -126,6 +134,12 @@ public final class NoLag extends JavaPlugin {
         }
         if (entityAIModule != null) {
             entityAIModule.stop();
+        }
+        if (netherChunkModule != null) {
+            netherChunkModule.stop();
+        }
+        if (fluidFloodModule != null) {
+            fluidFloodModule.stop();
         }
 
         try {
@@ -225,6 +239,14 @@ public final class NoLag extends JavaPlugin {
 
     public DashboardGUI getDashboardGUI() {
         return dashboardGUI;
+    }
+
+    public NetherChunkProtectionModule getNetherChunkModule() {
+        return netherChunkModule;
+    }
+
+    public FluidFloodProtectionModule getFluidFloodModule() {
+        return fluidFloodModule;
     }
 }
 
