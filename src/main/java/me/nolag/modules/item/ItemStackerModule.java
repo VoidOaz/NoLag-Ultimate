@@ -31,10 +31,10 @@ public final class ItemStackerModule implements Listener {
             return;
         }
 
-        // Search nearby items in a 2x2x2 box
+
         for (Entity nearby : newItem.getNearbyEntities(2.0, 2.0, 2.0)) {
             if (nearby instanceof Item other && other.isValid() && !other.isDead() && !other.equals(newItem)) {
-                // Skip untouchable items (e.g. shop items or infinite delay items)
+
                 if (other.getPickupDelay() > 1000) {
                     continue;
                 }

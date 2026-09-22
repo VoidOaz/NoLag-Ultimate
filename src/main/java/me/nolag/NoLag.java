@@ -47,7 +47,7 @@ public final class NoLag extends JavaPlugin {
 
     @Override
     public void onEnable() {
-        // 1. Version Compatibility Enforcement
+
         this.versionChecker = new VersionChecker();
         if (!versionChecker.isSupported()) {
             getLogger().warning("=========================================================");
@@ -58,13 +58,13 @@ public final class NoLag extends JavaPlugin {
             getLogger().warning("=========================================================");
         }
 
-        // 2. Save and load configuration
+
         saveDefaultConfig();
 
-        // 3. Initialize TPS & Diagnostics Monitor
+
         this.tpsMonitor = new TPSMonitor(this);
 
-        // 4. Initialize Core Optimization Modules
+
         this.cleanupManager = new CleanupManager(this);
         this.mobStackerModule = new MobStackerModule(this);
         this.itemStackerModule = new ItemStackerModule(this);
@@ -80,7 +80,7 @@ public final class NoLag extends JavaPlugin {
         this.netherChunkModule = new NetherChunkProtectionModule(this);
         this.fluidFloodModule = new FluidFloodProtectionModule(this);
 
-        // 5. Register Event Listeners
+
         var pm = getServer().getPluginManager();
         pm.registerEvents(mobStackerModule, this);
         pm.registerEvents(itemStackerModule, this);
@@ -96,7 +96,7 @@ public final class NoLag extends JavaPlugin {
         pm.registerEvents(netherChunkModule, this);
         pm.registerEvents(fluidFloodModule, this);
 
-        // 6. Register Commands and Channels
+
         PluginCommand cmd = getCommand("nolag");
         if (cmd != null) {
             NoLagCommand executor = new NoLagCommand(this);
@@ -107,7 +107,7 @@ public final class NoLag extends JavaPlugin {
         getServer().getMessenger().registerOutgoingPluginChannel(this, "BungeeCord");
         getServer().getMessenger().registerOutgoingPluginChannel(this, "nolag:main");
 
-        // 7. Success Banner
+
         getLogger().info("=========================================================");
         getLogger().info(" NoLag-Ultimate v" + getDescription().getVersion() + " successfully activated!");
         getLogger().info(" Running on MC " + versionChecker.getServerVersionString() + " (Paper/Folia Optimized)");
@@ -184,7 +184,7 @@ public final class NoLag extends JavaPlugin {
         return text == null ? "" : ChatColor.translateAlternateColorCodes('&', text);
     }
 
-    // Getters for Managers and Modules
+
     public VersionChecker getVersionChecker() {
         return versionChecker;
     }

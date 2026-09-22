@@ -62,8 +62,8 @@ public final class TNTProtectionModule implements Listener {
         while (iterator.hasNext()) {
             Block block = iterator.next();
             if (block.getType() == Material.TNT) {
-                iterator.remove(); // Prevent triggering adjacent TNT blocks in explosion
-                block.setType(Material.AIR, false); // Safely remove block without exploding
+                iterator.remove(); 
+                block.setType(Material.AIR, false); 
             }
         }
     }

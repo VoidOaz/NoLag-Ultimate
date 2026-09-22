@@ -30,7 +30,7 @@ public final class DashboardGUI implements Listener {
             return inventory;
         }
 
-        public void setInventory(Inventory inventory) {
+        void setInventory(Inventory inventory) {
             this.inventory = inventory;
         }
     }
@@ -44,13 +44,13 @@ public final class DashboardGUI implements Listener {
         Inventory inv = Bukkit.createInventory(holder, 27, GUI_TITLE);
         holder.setInventory(inv);
 
-        // Fill background with black stained glass panes
+
         ItemStack filler = createItem(Material.BLACK_STAINED_GLASS_PANE, " ", null);
         for (int i = 0; i < 27; i++) {
             inv.setItem(i, filler);
         }
 
-        // Slot 11: TPS & MSPT
+
         double tps = plugin.getTPSMonitor().getTPS();
         double mspt = plugin.getTPSMonitor().getMSPT();
         String tpsColor = tps >= 18.0 ? "§a" : (tps >= 15.0 ? "§e" : "§c");
@@ -64,7 +64,7 @@ public final class DashboardGUI implements Listener {
         );
         inv.setItem(11, createItem(Material.CLOCK, "§b§lServer Tick Health", tpsLore));
 
-        // Slot 13: RAM / Memory
+
         TPSMonitor.MemoryStats mem = TPSMonitor.getMemoryStats();
         String memColor = mem.usagePercent() < 70.0 ? "§a" : (mem.usagePercent() < 85.0 ? "§e" : "§c");
         List<String> memLore = List.of(
@@ -76,7 +76,7 @@ public final class DashboardGUI implements Listener {
         );
         inv.setItem(13, createItem(Material.EMERALD, "§a§lMemory & JVM Usage", memLore));
 
-        // Slot 15: World & Entities
+
         int totalEntities = 0;
         int totalChunks = 0;
         for (World world : Bukkit.getWorlds()) {
@@ -91,7 +91,7 @@ public final class DashboardGUI implements Listener {
         );
         inv.setItem(15, createItem(Material.BEACON, "§6§lWorld & Entity Stats", worldLore));
 
-        // Slot 21: Manual Cleanup Action
+
         List<String> cleanupLore = List.of(
                 "§7Click to immediately perform",
                 "§7a ground item & mob cleanup cycle.",
@@ -100,7 +100,7 @@ public final class DashboardGUI implements Listener {
         );
         inv.setItem(21, createItem(Material.NETHER_STAR, "§e§lPerform Cleanup", cleanupLore));
 
-        // Slot 23: Reload Configuration
+
         List<String> reloadLore = List.of(
                 "§7Click to reload configuration files",
                 "§7and restart optimization tasks.",
@@ -127,7 +127,7 @@ public final class DashboardGUI implements Listener {
             }
 
             if (slot == 21) {
-                // Manual cleanup
+
                 if (player.hasPermission("nolag.cleanup")) {
                     player.closeInventory();
                     var res = plugin.getCleanupManager().performCleanup(false);
@@ -136,7 +136,7 @@ public final class DashboardGUI implements Listener {
                     player.sendMessage(ChatColor.RED + "You do not have permission to run cleanup!");
                 }
             } else if (slot == 23) {
-                // Reload
+
                 if (player.hasPermission("nolag.reload")) {
                     player.closeInventory();
                     plugin.reloadPluginConfig();

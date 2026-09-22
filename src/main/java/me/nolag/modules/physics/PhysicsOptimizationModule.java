@@ -18,7 +18,7 @@ import org.bukkit.scheduler.BukkitTask;
 public final class PhysicsOptimizationModule implements Listener {
 
     private final NoLag plugin;
-    // Map of packed coordinate key -> update count in current 2-second window
+
     private final Map<Long, Integer> redstoneActivity = new ConcurrentHashMap<>();
     private BukkitTask resetTask;
 
@@ -37,7 +37,7 @@ public final class PhysicsOptimizationModule implements Listener {
             public void run() {
                 redstoneActivity.clear();
             }
-        }.runTaskTimer(plugin, 40L, 40L); // Clear every 2 seconds
+        }.runTaskTimer(plugin, 40L, 40L); 
     }
 
     public void stop() {
@@ -50,10 +50,10 @@ public final class PhysicsOptimizationModule implements Listener {
 
     private static long packLocation(Location loc) {
         if (loc == null || loc.getWorld() == null) return 0L;
-        long worldHash = (long) (loc.getWorld().getName().hashCode() & 0xFFFF); // 16 bits
-        long wx = (long) (loc.getBlockX() & 0xFFFFF);                           // 20 bits
-        long wz = (long) (loc.getBlockZ() & 0xFFFFF);                           // 20 bits
-        long wy = (long) (loc.getBlockY() & 0xFF);                              // 8 bits
+        long worldHash = (long) (loc.getWorld().getName().hashCode() & 0xFFFF); 
+        long wx = (long) (loc.getBlockX() & 0xFFFFF);                           
+        long wz = (long) (loc.getBlockZ() & 0xFFFFF);                           
+        long wy = (long) (loc.getBlockY() & 0xFF);                              
         return (worldHash << 48) | (wx << 28) | (wz << 8) | wy;
     }
 
@@ -70,7 +70,7 @@ public final class PhysicsOptimizationModule implements Listener {
 
         if (currentCount > maxUpdates) {
             redstoneActivity.remove(key);
-            event.setNewCurrent(0); // Cut power immediately
+            event.setNewCurrent(0); 
 
             Location loc = block.getLocation();
             plugin.getLogger().warning("[NoLag] Redstone clock suppressed at " +

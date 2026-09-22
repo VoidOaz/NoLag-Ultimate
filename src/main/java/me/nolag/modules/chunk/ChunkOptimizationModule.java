@@ -27,17 +27,17 @@ public final class ChunkOptimizationModule implements Listener {
     public void startTasks() {
         stopTasks();
 
-        // 1. Dynamic View Distance
+
         if (plugin.getConfig().getBoolean("features.dynamic-view-distance", true)) {
             this.dynamicDistanceTask = new BukkitRunnable() {
                 @Override
                 public void run() {
                     updateViewDistance();
                 }
-            }.runTaskTimer(plugin, 600L, 600L); // Check every 30s
+            }.runTaskTimer(plugin, 600L, 600L); 
         }
 
-        // 2. Chunk Cleaner
+
         if (plugin.getConfig().getBoolean("optimization.chunk-cleaner.enabled", true)) {
             int intervalMinutes = Math.max(1, plugin.getConfig().getInt("optimization.chunk-cleaner.interval-minutes", 8));
             long intervalTicks = intervalMinutes * 60L * 20L;
@@ -108,7 +108,7 @@ public final class ChunkOptimizationModule implements Listener {
         int unloadedCount = 0;
         for (World world : Bukkit.getWorlds()) {
             for (Chunk chunk : world.getLoadedChunks()) {
-                // If chunk has no players nearby and is not force loaded
+
                 if (!chunk.isForceLoaded() && !world.isChunkInUse(chunk.getX(), chunk.getZ())) {
                     if (world.unloadChunkRequest(chunk.getX(), chunk.getZ())) {
                         unloadedCount++;
