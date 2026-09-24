@@ -114,11 +114,11 @@ public final class MobStackerModule implements Listener {
         if (le.isLeashed() || !le.getPassengers().isEmpty() || le.isInsideVehicle()) {
             return false;
         }
-        // If entity has temporary no-stack tag (e.g. freshly unstacked)
+
         if (le.getPersistentDataContainer().has(noStackKey, PersistentDataType.BYTE)) {
             return false;
         }
-        // If entity has a custom name from nametag and is not a NoLag stack, don't stack it
+
         if (le.getCustomName() != null && !hasStackData(le)) {
             return false;
         }
@@ -189,6 +189,10 @@ public final class MobStackerModule implements Listener {
             return;
         }
 
+        if (!spawned.getLocation().getChunk().isLoaded()) {
+            return;
+        }
+
         LivingEntity le = (LivingEntity) spawned;
         int maxStackSize = plugin.getConfig().getInt("features.mob-stacker.max-stack-size", 50);
         double radius = plugin.getConfig().getDouble("features.mob-stacker.radius", 5.0);
@@ -196,7 +200,6 @@ public final class MobStackerModule implements Listener {
         for (Entity nearby : le.getNearbyEntities(radius, radius, radius)) {
             if (nearby.getType() == le.getType() && isEligible(nearby)) {
                 LivingEntity nearbyLe = (LivingEntity) nearby;
-                // Check age compatibility
                 if (le instanceof Ageable ageA && nearbyLe instanceof Ageable ageB && (ageA.isAdult() != ageB.isAdult())) {
                     continue;
                 }
@@ -220,7 +223,7 @@ public final class MobStackerModule implements Listener {
         int amount = getStackAmount(entity);
         if (amount > 1) {
             int remaining = amount - 1;
-            // Spawn next mob in stack on the next tick to prevent death chain recursion
+
             EntityType type = entity.getType();
             var loc = entity.getLocation();
 
@@ -231,7 +234,7 @@ public final class MobStackerModule implements Listener {
                 LivingEntity nextMob = (LivingEntity) loc.getWorld().spawn(loc, type.getEntityClass(), spawned -> {
                     if (spawned instanceof LivingEntity living) {
                         living.getPersistentDataContainer().set(noStackKey, PersistentDataType.BYTE, (byte) 1);
-                        // Preserve characteristics
+
                         if (entity instanceof Ageable oldAge && living instanceof Ageable newAge) {
                             if (oldAge.isAdult()) newAge.setAdult(); else newAge.setBaby();
                         }
@@ -246,7 +249,7 @@ public final class MobStackerModule implements Listener {
 
                 if (nextMob != null) {
                     setStackAmount(nextMob, remaining);
-                    // Remove temporary no-stack tag after a brief delay
+
                     Bukkit.getScheduler().runTaskLater(plugin, () -> {
                         if (nextMob.isValid()) {
                             nextMob.getPersistentDataContainer().remove(noStackKey);

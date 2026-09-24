@@ -28,7 +28,7 @@ public final class TPSMonitor {
     public void start() {
         stop();
 
-        // Tracker Task running every second (20 ticks)
+
         this.trackerTask = new BukkitRunnable() {
             @Override
             public void run() {
@@ -36,7 +36,7 @@ public final class TPSMonitor {
             }
         }.runTaskTimer(plugin, 20L, 20L);
 
-        // Lag Spike Monitor running every tick (1 tick)
+
         double threshold = plugin.getConfig().getDouble("atlas.lag-spike-threshold-ms", 150.0);
         if (plugin.getConfig().getBoolean("settings.debug", false) || threshold > 0) {
             this.spikeMonitorTask = new BukkitRunnable() {
@@ -72,7 +72,7 @@ public final class TPSMonitor {
         boolean updatedTPS = false;
         boolean updatedMSPT = false;
 
-        // 1. Direct Paper native TPS
+
         try {
             double[] tpsArray = Bukkit.getTPS();
             if (tpsArray != null && tpsArray.length > 0) {
@@ -82,14 +82,14 @@ public final class TPSMonitor {
         } catch (Throwable ignored) {
         }
 
-        // 2. Direct Paper native MSPT
+
         try {
             this.currentMSPT = Math.max(0.0, Bukkit.getAverageTickTime());
             updatedMSPT = true;
         } catch (Throwable ignored) {
         }
 
-        // Fallback calculations for forks / vanilla Spigot
+
         long now = System.currentTimeMillis();
         long diff = now - lastTickTimestamp.getAndSet(now);
         if (!updatedTPS) {
@@ -109,6 +109,9 @@ public final class TPSMonitor {
         int maxEntities = -1;
 
         for (World world : Bukkit.getWorlds()) {
+            if (world == null) {
+                continue;
+            }
             int entityCount = world.getEntityCount();
             if (entityCount > maxEntities) {
                 maxEntities = entityCount;
@@ -116,7 +119,7 @@ public final class TPSMonitor {
             }
         }
 
-        if (heaviestWorld != null) {
+        if (heaviestWorld != null && maxEntities >= 0) {
             plugin.getLogger().warning(String.format(
                     Locale.ROOT,
                     "[NoLag] Lag Spike detected! Tick duration: %dms | World: %s (%d entities, %d loaded chunks)",

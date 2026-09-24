@@ -9,10 +9,11 @@ public final class VersionChecker {
 
     private static final Pattern VERSION_PATTERN = Pattern.compile("(\\d+)\\.(\\d+)(?:\\.(\\d+))?");
 
-    // Minimum supported version: Minecraft 1.20.6
     private static final int MIN_MAJOR = 1;
     private static final int MIN_MINOR = 20;
-    private static final int MIN_PATCH = 6;
+    private static final int MIN_PATCH = 5;
+    private static final int MAX_MINOR = 26;
+    private static final int MAX_PATCH_FOR_26 = 3;
 
     private final String serverVersionString;
     private final int major;
@@ -31,7 +32,6 @@ public final class VersionChecker {
 
     private static String detectVersionString() {
         try {
-            // Paper / Modern Bukkit getMinecraftVersion()
             String mcVersion = Bukkit.getMinecraftVersion();
             if (mcVersion != null && !mcVersion.isBlank()) {
                 return mcVersion.trim();
@@ -57,12 +57,12 @@ public final class VersionChecker {
         } catch (Throwable ignored) {
         }
 
-        return "1.20.6"; // Fallback
+        return "1.20.5";
     }
 
     private static int[] parseVersion(String ver) {
         if (ver == null || ver.isBlank()) {
-            return new int[]{1, 20, 6};
+            return new int[]{1, 20, 5};
         }
         Matcher matcher = VERSION_PATTERN.matcher(ver);
         if (matcher.find()) {
@@ -74,7 +74,7 @@ public final class VersionChecker {
             } catch (NumberFormatException ignored) {
             }
         }
-        return new int[]{1, 20, 6};
+        return new int[]{1, 20, 5};
     }
 
     private static boolean checkSupported(int major, int minor, int patch) {
@@ -82,11 +82,19 @@ public final class VersionChecker {
             return false;
         }
 
-        // Must be at least 1.20.6
         if (minor < MIN_MINOR) {
             return false;
         }
+
         if (minor == MIN_MINOR && patch < MIN_PATCH) {
+            return false;
+        }
+
+        if (minor > MAX_MINOR) {
+            return false;
+        }
+
+        if (minor == MAX_MINOR && patch > MAX_PATCH_FOR_26) {
             return false;
         }
 

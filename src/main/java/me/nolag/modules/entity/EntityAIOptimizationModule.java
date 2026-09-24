@@ -47,7 +47,7 @@ public final class EntityAIOptimizationModule implements Listener {
             public void run() {
                 optimizeEntityAI();
             }
-        }.runTaskTimer(plugin, 200L, 200L); // Every 10 seconds
+        }.runTaskTimer(plugin, 200L, 200L); 
     }
 
     public void stop() {
@@ -89,12 +89,20 @@ public final class EntityAIOptimizationModule implements Listener {
         double rangeSq = activationRange * activationRange;
 
         for (World world : Bukkit.getWorlds()) {
+            java.util.List<LivingEntity> entitiesToProcess = new java.util.ArrayList<>();
+            
             for (LivingEntity le : world.getLivingEntities()) {
                 if (isProtected(le) || !le.isValid() || le.isDead()) {
                     continue;
                 }
+                entitiesToProcess.add(le);
+            }
 
-                // If TPS is healthy (> 18.0), restore AI ONLY if disabled by NoLag
+            for (LivingEntity le : entitiesToProcess) {
+                if (!le.isValid() || le.isDead()) {
+                    continue;
+                }
+
                 if (tps >= 18.0) {
                     if (le.getPersistentDataContainer().has(aiDisabledKey, PersistentDataType.BYTE)) {
                         le.setAI(true);
@@ -103,7 +111,6 @@ public final class EntityAIOptimizationModule implements Listener {
                     continue;
                 }
 
-                // Check distance to nearest player
                 boolean playerNear = false;
                 for (Player player : world.getPlayers()) {
                     if (player.getLocation().distanceSquared(le.getLocation()) <= rangeSq) {

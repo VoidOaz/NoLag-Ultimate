@@ -47,7 +47,7 @@ public final class WorldOptimizationModule implements Listener {
                             Block relative = world.getBlockAt(bx + x, by + y, bz + z);
                             if (Tag.LEAVES.isTagged(relative.getType())) {
                                 if (relative.getBlockData() instanceof Leaves leaves) {
-                                    // Do NOT decay player-placed persistent leaves!
+
                                     if (!leaves.isPersistent() && leaves.getDistance() >= 7) {
                                         relative.breakNaturally();
                                     }
@@ -74,7 +74,7 @@ public final class WorldOptimizationModule implements Listener {
         Location from = event.getFrom();
         if (from.getBlockX() != to.getBlockX() || from.getBlockY() != to.getBlockY() || from.getBlockZ() != to.getBlockZ()) {
             Player player = event.getPlayer();
-            // Don't rescue creative/spectator players
+
             if (player.getGameMode() == GameMode.CREATIVE || player.getGameMode() == GameMode.SPECTATOR) {
                 return;
             }

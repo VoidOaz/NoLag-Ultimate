@@ -8,11 +8,10 @@ build/
 target/
 
 # Dependencies
-.mypy_cache/
-.pytest_cache/
-.coverage
-coverage/
-htmlcov/
+lib/
+libs/
+jars/
+*.jar
 
 # Logs and temp files
 *.log
@@ -27,10 +26,11 @@ htmlcov/
 # Editors
 .vscode/
 .idea/
-*.swp
-*.swo
+*.iml
+*.ipr
+*.iws
 
-# System files
+# System
 .DS_Store
 Thumbs.db
 ```

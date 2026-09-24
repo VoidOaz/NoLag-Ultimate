@@ -30,27 +30,27 @@ public final class FluidFloodProtectionModule implements Listener {
 
     private final NoLag plugin;
 
-    // Player-based tracking
+
     private final Map<UUID, FluidActivityData> playerFluidData = new ConcurrentHashMap<>();
 
-    // Chunk-based tracking (worldId + chunkX + chunkZ -> activity count)
+
     private final Map<String, Integer> chunkFluidActivity = new ConcurrentHashMap<>();
 
-    // Global short-term tracking
+
     private volatile int globalFluidUpdatesInWindow = 0;
 
     private BukkitTask cleanupTask;
     private BukkitTask globalResetTask;
 
-    // Constants
-    private static final int PLAYER_WINDOW_MS = 3000; // 3 saniye pencere
-    private static final int CHUNK_WINDOW_MS = 2000; // 2 saniye pencere
-    private static final int GLOBAL_WINDOW_MS = 1000; // 1 saniye pencere
 
-    // Thresholds - normal usage'ın üzerinde ama farm'lara izin verir
-    private static final int MAX_PLAYER_BUCKET_USES = 12; // 3 saniyede normal: 3-5
-    private static final int MAX_CHUNK_FLUID_SPREADS = 40; // 2 saniyede normal: 10-20
-    private static final int MAX_GLOBAL_UPDATES = 100; // 1 saniyede normal: 30-50
+    private static final int PLAYER_WINDOW_MS = 3000; 
+    private static final int CHUNK_WINDOW_MS = 2000; 
+    private static final int GLOBAL_WINDOW_MS = 1000; 
+
+
+    private static final int MAX_PLAYER_BUCKET_USES = 12; 
+    private static final int MAX_CHUNK_FLUID_SPREADS = 40; 
+    private static final int MAX_GLOBAL_UPDATES = 100; 
 
     public FluidFloodProtectionModule(NoLag plugin) {
         this.plugin = plugin;
@@ -58,15 +58,15 @@ public final class FluidFloodProtectionModule implements Listener {
     }
 
     private void startTasks() {
-        // Player data cleanup
+
         this.cleanupTask = new BukkitRunnable() {
             @Override
             public void run() {
                 cleanupPlayerData();
             }
-        }.runTaskTimer(plugin, 60L, 60L); // Her 3 saniye
+        }.runTaskTimer(plugin, 60L, 60L); 
 
-        // Global reset
+
         this.globalResetTask = new BukkitRunnable() {
             @Override
             public void run() {
@@ -130,7 +130,6 @@ public final class FluidFloodProtectionModule implements Listener {
         FluidActivityData data = playerFluidData.computeIfAbsent(playerId,
             k -> new FluidActivityData());
 
-        // Window expired check
         if ((now - data.windowStart) > PLAYER_WINDOW_MS) {
             data.windowStart = now;
             data.bucketUses = 0;
@@ -147,7 +146,7 @@ public final class FluidFloodProtectionModule implements Listener {
 
     private void handleExcessiveBucketUse(Player player, FluidActivityData data) {
         if (data.warningLevel == 0) {
-            // İlk uyarı
+
             plugin.getLogger().info("[NoLag] Player " + player.getName() +
                 " using buckets rapidly (" + data.bucketUses + " uses in " +
                 (PLAYER_WINDOW_MS/1000) + "s)");
@@ -157,9 +156,9 @@ public final class FluidFloodProtectionModule implements Listener {
             player.sendMessage(plugin.color(prefix +
                 "&eRapid fluid placement detected. Please slow down."));
         } else {
-            // İkinci seviye - event'i iptal et
-            // Not: PlayerInteractEvent'te iptal etmek bucket kullanımı engeller
-            // Ama bu aggressive olabilir, sadece log yapıyoruz
+
+
+
             if (System.currentTimeMillis() - data.lastWarningTime > 2000L) {
                 player.sendMessage(plugin.color("&cToo many fluid placements! Wait a moment."));
                 data.lastWarningTime = System.currentTimeMillis();
@@ -181,25 +180,25 @@ public final class FluidFloodProtectionModule implements Listener {
         Block block = event.getBlock();
         String chunkKey = getChunkKey(block);
 
-        // Global counter
+
         globalFluidUpdatesInWindow++;
 
-        // Chunk counter
+
         int chunkCount = chunkFluidActivity.merge(chunkKey, 1, Integer::sum);
 
-        // TPS check - düşük TPS'de daha agresif
+
         double tps = plugin.getTPSMonitor().getTPS();
         boolean serverUnderLoad = tps < 17.0;
 
         int chunkLimit = serverUnderLoad ? (MAX_CHUNK_FLUID_SPREADS / 2) : MAX_CHUNK_FLUID_SPREADS;
         int globalLimit = serverUnderLoad ? (MAX_GLOBAL_UPDATES / 2) : MAX_GLOBAL_UPDATES;
 
-        // Chunk bazlı limit aşımı
+
         if (chunkCount > chunkLimit) {
-            // Source block'u kontrol et - eğer source ise spread'e izin ver (farm'lar için)
+
             Block sourceBlock = getSourceBlock(block, type);
             if (sourceBlock == null || sourceBlock.getType() != type) {
-                // Spread bloğu, source değil - iptal edilebilir
+
                 event.setCancelled(true);
 
                 if (plugin.getConfig().getBoolean("settings.debug", false)) {
@@ -210,7 +209,7 @@ public final class FluidFloodProtectionModule implements Listener {
             return;
         }
 
-        // Global limit aşımı
+
         if (globalFluidUpdatesInWindow > globalLimit) {
             Block sourceBlock = getSourceBlock(block, type);
             if (sourceBlock == null || sourceBlock.getType() != type) {
@@ -232,13 +231,13 @@ public final class FluidFloodProtectionModule implements Listener {
             return;
         }
 
-        // Hedef blok zaten doluysa işlem yapma
+
         Block toBlock = event.getToBlock();
         if (toBlock.getType().isSolid() || toBlock.isLiquid()) {
             return;
         }
 
-        // Aynı kontrolleri uygula
+
         String chunkKey = getChunkKey(block);
         globalFluidUpdatesInWindow++;
 
@@ -250,7 +249,7 @@ public final class FluidFloodProtectionModule implements Listener {
         int chunkLimit = serverUnderLoad ? (MAX_CHUNK_FLUID_SPREADS / 2) : MAX_CHUNK_FLUID_SPREADS;
 
         if (chunkCount > chunkLimit) {
-            // Source block kontrolü
+
             Block sourceBlock = getSourceBlock(block, type);
             if (sourceBlock == null || sourceBlock.getType() != type) {
                 event.setCancelled(true);
@@ -263,14 +262,14 @@ public final class FluidFloodProtectionModule implements Listener {
      * Levelled block'lar (level > 0) source değildir.
      */
     private Block getSourceBlock(Block block, Material fluidType) {
-        // Basit check: etraftaki source block'ları bul
+
         for (BlockFace face : BlockFace.values()) {
             if (face == BlockFace.UP || face == BlockFace.DOWN) continue;
 
             Block adjacent = block.getRelative(face);
             if (adjacent.getType() == fluidType) {
-                // Check if it's a source (not levelled)
-                // Paper API'de BlockData kullanılabilir ama vanilla-compatible kalalım
+
+
                 return adjacent;
             }
         }

@@ -40,12 +40,12 @@ public final class CommandSecurityModule implements Listener {
             return;
         }
 
-        // Strip ALL leading slashes to prevent //calc, ///fill, etc. bypasses
+
         String cleanCommand = raw.replaceFirst("^/+", "");
         String[] parts = cleanCommand.split("\\s+", 2);
         String cmdOnly = parts[0];
 
-        // Strip namespace if present (e.g. "minecraft:fill" -> "fill", "worldedit:calc" -> "calc")
+
         String strippedCmd = cmdOnly.contains(":") ? cmdOnly.substring(cmdOnly.indexOf(':') + 1) : cmdOnly;
 
         List<String> blockedList = plugin.getConfig().getStringList("advanced-optimization.command-filter.blocked-commands");

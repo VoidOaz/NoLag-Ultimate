@@ -56,7 +56,7 @@ public final class CleanupManager {
                     long cooldownMs = plugin.getConfig().getLong("settings.emergency-cleanup-cooldown", 60) * 1000L;
                     long now = System.currentTimeMillis();
 
-                    // Emergency cleanup if TPS falls below threshold with cooldown guard
+
                     if (tps < threshold && countdownSeconds > 30 && (now - lastEmergencyCleanupTime >= cooldownMs)) {
                         lastEmergencyCleanupTime = now;
                         String warning = plugin.getConfig()
@@ -107,15 +107,23 @@ public final class CleanupManager {
         boolean removeMobs = plugin.getConfig().getBoolean("features.remove-mobs", false) || emergency;
 
         for (World world : Bukkit.getWorlds()) {
+            java.util.List<Entity> entitiesToRemove = new java.util.ArrayList<>();
+            
             for (Entity entity : world.getEntities()) {
                 if (removeItems && entity instanceof Item item) {
-                    item.remove();
+                    entitiesToRemove.add(entity);
                     itemsRemoved++;
                 } else if (removeMobs && entity instanceof LivingEntity le) {
                     if (isEligibleForCleanup(le)) {
-                        le.remove();
+                        entitiesToRemove.add(entity);
                         mobsRemoved++;
                     }
+                }
+            }
+            
+            for (Entity entity : entitiesToRemove) {
+                if (entity.isValid() && !entity.isDead()) {
+                    entity.remove();
                 }
             }
         }
@@ -146,7 +154,7 @@ public final class CleanupManager {
         if (le.isLeashed() || !le.getPassengers().isEmpty() || le.isInsideVehicle()) {
             return false;
         }
-        // If entity has a custom name (and is not a NoLag mob stack), preserve it
+
         if (le.getCustomName() != null && !plugin.getMobStackerModule().hasStackData(le)) {
             return false;
         }
