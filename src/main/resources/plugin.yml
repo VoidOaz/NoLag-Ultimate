@@ -1,0 +1,105 @@
+name: NoLag
+version: 21.6.0
+main: me.nolag.NoLag
+api-version: "1.21.1"
+author: VoidOaz
+description: "Performance and stability optimization suite for Paper-family servers. Target versions: Minecraft 1.21.1-1.21.11 and 26.1-26.2."
+
+load: POSTWORLD
+folia-supported: true
+
+commands:
+  nolag:
+    description: "Main command for NoLag-Ultimate management and diagnostics."
+    usage: "/nolag <reload|cleanup|ramfix|tps|dashboard|stats|performance|items|version>"
+    aliases: [nl, lag, antilag]
+    permission: nolag.use
+
+permissions:
+  nolag.use:
+    description: "Allows access to the NoLag command entry point."
+    default: true
+
+  nolag.admin:
+    description: "Allows access to all NoLag administrative features."
+    default: op
+    children:
+      nolag.reload: true
+      nolag.cleanup: true
+      nolag.tps: true
+      nolag.dashboard: true
+      nolag.performance: true
+      nolag.items: true
+      nolag.unstack: true
+      nolag.commandfilter.bypass: true
+      nolag.commandfilter.notify: true
+      nolag.elytra.bypass: true
+      nolag.unsafe.bypass: true
+      nolag.armorstand.bypass: true
+      nolag.tnt.bypass: true
+      nolag.netherchunk.bypass: true
+      nolag.flood.bypass: true
+
+  nolag.performance:
+    description: "Allows viewing Performance Impact Analyzer data."
+    default: op
+
+  nolag.items:
+    description: "Allows viewing the dropped-item lifetime system status."
+    default: op
+
+  nolag.reload:
+    description: "Allows reloading NoLag configuration."
+    default: op
+
+  nolag.cleanup:
+    description: "Allows manually triggering cleanup."
+    default: op
+
+  nolag.tps:
+    description: "Allows viewing live TPS and MSPT."
+    default: op
+
+  nolag.dashboard:
+    description: "Allows opening the NoLag performance dashboard GUI."
+    default: op
+
+  nolag.unstack:
+    description: "Allows unstacking mobs by shift+right-click."
+    default: op
+
+  nolag.commandfilter.bypass:
+    description: "Bypasses NoLag command-filter restrictions."
+    default: op
+
+  nolag.commandfilter.notify:
+    description: "Receives notifications when players attempt blocked commands."
+    default: op
+
+  nolag.elytra.bypass:
+    description: "Bypasses low-TPS Elytra restrictions."
+    default: op
+
+  nolag.unsafe.bypass:
+    description: "Bypasses unsafe action restrictions enforced by NoLag."
+    default: op
+
+  nolag.armorstand.bypass:
+    description: "Bypasses the Armor Stand placement limit."
+    default: op
+
+  nolag.tnt.bypass:
+    description: "Bypasses NoLag TNT protection checks."
+    default: op
+
+  nolag.netherchunk.bypass:
+    description: "Bypasses Nether chunk traversal protection."
+    default: op
+
+  nolag.flood.bypass:
+    description: "Bypasses fluid flood protection."
+    default: op
+
+channels:
+  - "BungeeCord"
+  - "nolag:main"

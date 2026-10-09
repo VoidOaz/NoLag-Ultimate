@@ -1,0 +1,361 @@
+# ==========================================================
+#                  NoLag-Ultimate Configuration
+#                      Version 21.6.0
+# Supported targets: 1.21.1-1.21.11, 26.1, 26.1.1, 26.1.2, 26.2
+#             Primary targets: Paper / Purpur / Spigot / Folia
+# ==========================================================
+
+# ==========================================================
+# NoLag Ultimate ChunkOptimizer (High-Performance Engine)
+# When set to true, NoLag takes over server chunk streaming,
+# replacing vanilla/Mojang view & simulation mechanics.
+# ==========================================================
+chunk-optimizer:
+  enabled: false
+  min-chunks: 2
+  max-chunks: 12
+  direction-bias-enabled: true
+  speed-reduction: 2
+  fast-travel-threshold: 1.2
+  max-step-per-cycle: 2
+  hysteresis-chunks: 1
+  rate-limit-enabled: true
+  min-step-cycles: 2
+  async-chunk-prioritization: true
+
+settings:
+  # Scheduled cleanup countdown interval, in minutes.
+  cleanup-interval: 5
+
+  # Automatic emergency cleanup starts when TPS drops below this value.
+  tps-threshold: 16.0
+
+  # Minimum time between automatic emergency cleanups, in seconds.
+  emergency-cleanup-cooldown: 60
+
+  # Maximum tracked redstone activity updates for the physics protection logic.
+  max-redstone-updates: 20
+
+  # Maximum Armor Stands allowed in one chunk.
+  armor-stand-limit-per-chunk: 15
+
+  # General diagnostic logging.
+  debug: false
+
+  # Maximum number of entities processed per cleanup tick.
+  cleanup-entities-per-tick: 300
+
+  # Maximum number of entities processed per cleanup tick during emergency cleanup.
+  cleanup-entities-per-tick-emergency: 1000
+
+  # Main-thread time budget for the time-sliced cleanup scanner.
+  cleanup-slice-budget-ms-per-tick: 2.0
+
+  # Dynamic view-distance controller (fallback when chunk-optimizer is false).
+  view-distance:
+    min: 2
+    max: 12
+    tps-low: 15.0
+    tps-high: 18.0
+    recovery-margin: 1.0
+    recovery-checks: 2
+    check-interval-seconds: 20
+    affect-send-distance: true
+
+features:
+  # Scheduled ground item and entity clutter removal.
+  remove-items: true
+  remove-mobs: false
+
+  # --------------------------------------------------------
+  # Entity Culling (FOV & Frustum Client/Server Optimization)
+  # --------------------------------------------------------
+  entity-culling:
+    enabled: true
+    max-distance: 48.0
+    safety-distance: 8.0
+    fov-dot-threshold: 0.15
+    tick-interval: 5
+
+  # --------------------------------------------------------
+  # RamFixer - Advanced Memory Optimization & Heap Management
+  # --------------------------------------------------------
+  ram-fixer:
+    enabled: true
+    # Heartbeat sampling interval (seconds). Cheap JMX reads; heavy work is
+    # only dispatched when heap pressure crosses the tier thresholds below.
+    monitor-interval-seconds: 1
+    # Legacy key: minimum cadence (minutes) between FULL automated sweeps.
+    interval-minutes: 5
+    # Pressure tier thresholds (% of max heap).
+    medium-threshold-percent: 65.0
+    high-threshold-percent: 78.0
+    critical-threshold-percent: 88.0
+    # Backwards-compatible alias for high-threshold-percent.
+    auto-trim-threshold-percent: 78.0
+    # Sub-actions unlocked by the tiers.
+    ghost-chunk-eviction: true
+    dead-entity-sweep: true
+    promotion-watchdog: true
+    # Nanosecond-scale main-thread budget per sweep slice (ms).
+    slice-budget-ms: 2
+    # Extra chunk padding protected around every online player during eviction.
+    ghost-chunk-safety-padding: 2
+    # Explicit GC policy (never runs on hot paths; cooldown-guarded).
+    allow-explicit-gc: true
+    allow-emergency-gc: false
+    gc-cooldown-seconds: 90
+    # Manual /nolag ramfix is an administrator-triggered maintenance operation.
+    # After the time-sliced sweep completes, one guarded GC may run to reclaim
+    # heap that is no longer referenced. Automatic pressure handling never uses it.
+    manual-gc-after-sweep: true
+    manual-gc-threshold-percent: 60.0
+    manual-gc-delay-ticks: 20
+    # Upper safety bound for a single manual run. Chunks near players and
+    # force-loaded chunks are always protected. This is a ceiling, not a target.
+    max-manual-chunk-unloads: 512
+
+  # --------------------------------------------------------
+  # Item lifetime / cleanup
+  # --------------------------------------------------------
+  item-expiry:
+    enabled: true
+    lifetime-seconds: 120
+    update-interval-seconds: 1
+    rename-format: ""
+
+  performance-analyzer:
+    enabled: true
+
+  memory-optimization:
+    enabled: true
+    scan-interval-seconds: 30
+
+  # Prevents excessive redstone/physics activity from becoming a lag machine.
+  anti-lag-machine: true
+
+  # Limits Armor Stand placement per chunk.
+  armor-stand-limiter: true
+
+  # Enables primed-TNT-per-chunk protection.
+  tnt-protection: true
+
+  # Enables anti-chain reaction explosion handling.
+  anti-tnt-chain: true
+
+  # --------------------------------------------------------
+  # Nether chunk traversal protection
+  # --------------------------------------------------------
+  nether-chunk-protection:
+    enabled: true
+    proactive-view-distance: true
+    dampen-velocity: true
+
+    block-teleport-to-roof: false
+    warn-on-roof-join: false
+    bypass-creative: true
+    ignore-spectator: true
+    trust-command-teleports: true
+    trust-plugin-teleports: true
+    log-violations: false
+
+    roof-min-y: 127.0
+    roof-default-view-distance: 4
+    max-speed-bps: 70.0
+    max-distance-rate-bps: 85.0
+    max-chunk-rate-per-second: 8.0
+    vehicle-speed-multiplier: 0.90
+    max-instant-chunk-jump: 4
+    max-traversed-chunks-window: 25
+    max-unique-chunks-window: 20
+    full-threshold-tps: 19.0
+    minimum-threshold-tps: 15.0
+    minimum-pressure-factor: 0.55
+    min-horizontal-distance: 0.005
+
+    soft-strike-limit: 2
+    hard-strike-limit: 5
+    max-strikes: 20
+    strike-decay: 1
+    soft-send-view-distance: 4
+    hard-send-view-distance: 2
+
+    sample-interval-ms: 75
+    window-ms: 4000
+    strike-decay-ms: 10000
+    violation-debounce-ms: 300
+    recovery-delay-ms: 3000
+    teleport-grace-ms: 1500
+
+    messages:
+      warning: "&8[&6NoLag&8] &eNether roof traversal speed is throttled to preserve server performance."
+      roof: "&8[&6NoLag&8] &cNether roof traversal limit triggered."
+
+  # --------------------------------------------------------
+  # Fluid flood / machine protection
+  # --------------------------------------------------------
+  fluid-flood-protection:
+    enabled: true
+    protect-flow: true
+    protect-ice: true
+    protect-dispenser-flood: true
+    protect-flying-machine-flood: true
+    adaptive-limits: true
+    neutralize-fluid: true
+    neutralize-ice: true
+    break-machine-components: true
+    log-violations: false
+    player-messages: true
+    bypass-permission: "nolag.flood.bypass"
+
+    # Hot-path sampling and cache budgets.
+    max-flow-cells-per-world: 128
+    max-tracked-source-blocks: 32
+    flow-analysis-interval-ms: 200
+    flow-window-ms: 1000
+    flow-cell-ttl-ms: 6000
+    watch-window-ms: 6000
+
+    # High-confidence flying-machine detection.
+    machine-inspection-radius: 2
+    machine-track-radius: 10
+    max-machine-tracks: 48
+    machine-min-pulses: 3
+    machine-pulse-window-ms: 1800
+    machine-inspection-cooldown-ms: 250
+    machine-track-ttl-ms: 4000
+    machine-break-confidence: 9
+    machine-neutralize-cooldown-ms: 5000
+
+    # Fluid burst thresholds. Flow alone does not destroy a build.
+    flow-burst-threshold: 48
+    critical-flow-burst-threshold: 96
+    flow-burst-confidence-bonus: 32
+    minimum-source-signals: 8
+    emergency-throttle-ms: 3500
+    emergency-chunk-radius: 1
+
+    # Player source flooding.
+    source-window-ms: 2500
+    player-state-expire-ms: 90000
+    player-source-burst-threshold: 12
+    critical-source-burst-threshold: 20
+    compact-source-threshold: 8
+    source-compact-radius-blocks: 4
+    player-source-confidence-bonus: 12
+
+    # Dispenser fluid clocks.
+    dispenser-window-ms: 1200
+    dispenser-ttl-ms: 10000
+    dispenser-max-pulses: 10
+    minimum-dispenser-redstone-signals: 2
+
+    # Machine neutralization scope.
+    machine-component-radius: 3
+    machine-component-limit: 12
+    machine-clear-radius: 4
+    vertical-duplication-y: 280
+
+
+
+  # Core optimization toggles.
+  fast-leaf-decay: true
+  item-stacker: true
+  void-teleport: true
+  hopper-throttling: true
+  dynamic-view-distance: true
+
+  # Smart mob stacker.
+  mob-stacker:
+    enabled: true
+    max-stack-size: 50
+    min-mobs-to-stack: 8
+    radius: 5.0
+    check-interval: 3
+    slice-budget-ms: 1.0
+
+# ==========================================================
+# Advanced optimization / safety controls
+# ==========================================================
+advanced-optimization:
+  command-filter:
+    enabled: true
+    notify-admins: true
+    admin-notify-message: "&e[NoLag] Player &c{player} &etried to use restricted command: &c/{command}"
+    message: "&cThis command is restricted due to server lag and stability risk!"
+    blocked-commands:
+      - "fill"
+      - "setblock"
+      - "clone"
+      - "worldedit"
+      - "calc"
+      - "eval"
+      - "solve"
+      - "reload"
+      - "kill"
+
+  physics-freeze-tps: 15.0
+
+  elytra-protection:
+    enabled: true
+    tps-threshold: 15.0
+    message: "&cElytra is disabled due to low server performance! (TPS: {tps})"
+
+  hopper:
+    heavy-throttling-tps: 14.0
+    light-throttling-tps: 16.0
+
+tnt-protection:
+  max-primed-tnt-per-chunk: 25
+  disable-explosion-fire: true
+  yield-zero-threshold: 50
+  yield-zero-value: 0.0
+
+optimization:
+  activation-range:
+    enabled: true
+    range: 48
+    entities-per-run: 500
+
+  chunk-cleaner:
+    # Disabled by default in 21.6.0 compatibility patch: prevents aggressive client chunk refresh/unload cycles.
+    enabled: false
+    enabled: true
+    interval-minutes: 8
+    slice-budget-ms: 1
+    safety-padding: 1
+    budget-ms-per-tick: 2.0
+    player-safe-margin: 2
+    max-protection-radius: 40
+    player-protection-refresh-ticks: 10
+    max-examined-per-cycle: 250000
+    max-unloads-per-cycle: 5000
+    max-unloads-per-tick: 256
+    time-check-every-chunks: 16
+    pause-below-tps: 12.0
+    half-budget-below-tps: 15.0
+    disabled-worlds: []
+
+atlas:
+  lag-spike-threshold-ms: 150
+  emergency-mspt: 55.0
+
+announcements:
+  five-minutes: "&8[&6NoLag&8] &eGround items will be cleared in &65 minutes&e!"
+  two-minutes: "&8[&6NoLag&8] &eGround items will be cleared in &62 minutes&e!"
+  one-minute: "&8[&6NoLag&8] &eGround items will be cleared in &61 minute&e!"
+  thirty-seconds: "&8[&6NoLag&8] &cGround items will be cleared in &430 seconds&e!"
+  ten-seconds: "&8[&6NoLag&8] &cGround items will be cleared in &410 seconds&e!"
+
+messages:
+  prefix: "&8[&6NoLag&8] &r"
+  reload-success: "&aConfiguration successfully reloaded!"
+  no-permission: "&cYou do not have permission to use this command!"
+  armor-limit-reached: "&cThis chunk has reached the Armor Stand limit (%limit%)!"
+  low-tps-warning: "&4&lWARNING! &cLow TPS detected (&e%tps%&c). Emergency cleanup starting..."
+  mob-separated: "&8[&6NoLag&8] &7- One mob separated! Remaining: &e%amount%"
+
+  flood:
+    violation: "&eExcessive fluid activity was blocked."
+    severe-violation: "&cSuspicious fluid activity was blocked."
+    machine-neutralized: "&cA suspicious fluid machine was neutralized."
