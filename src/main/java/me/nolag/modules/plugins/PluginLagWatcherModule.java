@@ -14,6 +14,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -54,7 +55,9 @@ public final class PluginLagWatcherModule {
 
     public void reload() {
         var cfg = plugin.getConfig();
-        enabled = cfg.getBoolean("features.plugin-lag-watcher.enabled", true);
+        // A global-thread sampler cannot attribute region-plugin MSPT on Folia.
+        enabled = cfg.getBoolean("features.plugin-lag-watcher.enabled", true)
+                && !plugin.getSchedulerAdapter().isFolia();
         notifyOps = cfg.getBoolean("features.plugin-lag-watcher.notify-ops", true);
         msptAlertThreshold = Math.max(2.0, cfg.getDouble("features.plugin-lag-watcher.mspt-alert-threshold", 8.0));
         long cooldownSeconds = Math.max(10L, cfg.getLong("features.plugin-lag-watcher.alert-cooldown-seconds", 60L));
@@ -68,11 +71,7 @@ public final class PluginLagWatcherModule {
             return;
         }
         refreshPluginIndex();
-        if (plugin.getSchedulerAdapter().isFolia()) {
-            plugin.getSchedulerAdapter().runGlobal(() -> serverMainThread = Thread.currentThread());
-        } else {
-            serverMainThread = Thread.currentThread();
-        }
+        serverMainThread = Thread.currentThread();
         long intervalMillis = Math.max(100L, samplingIntervalTicks * 50L);
         samplerExecutor = Executors.newSingleThreadScheduledExecutor(task -> {
             Thread thread = new Thread(task, "NoLag-PluginLagSampler");
@@ -130,6 +129,7 @@ public final class PluginLagWatcherModule {
 
     private void refreshPluginIndex() {
         List<PluginPrefix> prefixes = new ArrayList<>();
+        Set<String> activePluginNames = new HashSet<>();
         for (Plugin candidate : Bukkit.getPluginManager().getPlugins()) {
             if (candidate == null || candidate == plugin || !candidate.isEnabled()) {
                 continue;
@@ -145,8 +145,13 @@ public final class PluginLagWatcherModule {
                 continue;
             }
             prefixes.add(new PluginPrefix(prefix, exactClass, candidate.getName()));
+            activePluginNames.add(candidate.getName());
             metricsMap.computeIfAbsent(candidate.getName(), key -> new PluginMetrics(candidate));
         }
+        // Retaining a PluginMetrics object also retains its Plugin instance/classloader. Remove
+        // entries and cooldowns for plugins that have been disabled or unloaded.
+        metricsMap.keySet().removeIf(name -> !activePluginNames.contains(name));
+        lastAlertTimestamps.keySet().removeIf(name -> !activePluginNames.contains(name));
         prefixes.sort(Comparator.comparingInt((PluginPrefix entry) -> entry.prefix().length()).reversed());
         pluginPrefixes = prefixes.toArray(PluginPrefix[]::new);
     }

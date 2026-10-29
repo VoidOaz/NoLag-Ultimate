@@ -1,10 +1,7 @@
 package me.nolag.modules.tnt;
 
-import java.util.Iterator;
 import me.nolag.NoLag;
 import org.bukkit.Chunk;
-import org.bukkit.Material;
-import org.bukkit.block.Block;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.TNTPrimed;
 import org.bukkit.entity.minecart.ExplosiveMinecart;
@@ -23,7 +20,7 @@ public final class TNTProtectionModule implements Listener {
     private volatile boolean antiTntChainEnabled = true;
     private volatile int maxPrimedTntPerChunk = 25;
     private volatile int yieldZeroThreshold = 50;
-    private volatile float yieldZeroValue = 0.0f;
+    private volatile float yieldZeroValue = 1.0f;
     private volatile boolean disableExplosionFire = true;
 
     public TNTProtectionModule(NoLag plugin) {
@@ -37,7 +34,8 @@ public final class TNTProtectionModule implements Listener {
         this.antiTntChainEnabled = cfg.getBoolean("features.anti-tnt-chain", true);
         this.maxPrimedTntPerChunk = Math.max(1, cfg.getInt("tnt-protection.max-primed-tnt-per-chunk", 25));
         this.yieldZeroThreshold = Math.max(1, cfg.getInt("tnt-protection.yield-zero-threshold", 50));
-        this.yieldZeroValue = (float) cfg.getDouble("tnt-protection.yield-zero-value", 0.0);
+        this.yieldZeroValue = (float) Math.max(0.0, Math.min(1.0,
+                cfg.getDouble("tnt-protection.yield-zero-value", 1.0)));
         this.disableExplosionFire = cfg.getBoolean("tnt-protection.disable-explosion-fire", true);
     }
 
@@ -52,6 +50,13 @@ public final class TNTProtectionModule implements Listener {
             return;
         }
 
+        if (spawned instanceof TNTPrimed primed) {
+            Entity source = primed.getSource();
+            if (source instanceof org.bukkit.entity.Player player && player.hasPermission("nolag.tnt.bypass")) {
+                return;
+            }
+        }
+
         Chunk chunk = event.getLocation().getChunk();
         if (!chunk.isLoaded()) {
             return;
@@ -61,7 +66,6 @@ public final class TNTProtectionModule implements Listener {
         for (Entity entity : chunk.getEntities()) {
             if (entity instanceof TNTPrimed || entity instanceof ExplosiveMinecart) {
                 tntCount++;
-
 
                 if (tntCount >= maxPrimedTntPerChunk) {
                     event.setCancelled(true);
@@ -77,25 +81,18 @@ public final class TNTProtectionModule implements Listener {
             return;
         }
 
-        if (event.blockList().size() >= yieldZeroThreshold) {
+        if ((event.getEntity() instanceof TNTPrimed || event.getEntity() instanceof ExplosiveMinecart)
+                && yieldZeroValue < 1.0f && event.blockList().size() >= yieldZeroThreshold) {
             event.setYield(yieldZeroValue);
         }
 
-        Iterator<Block> iterator = event.blockList().iterator();
-        while (iterator.hasNext()) {
-            Block block = iterator.next();
-            if (block.getType() == Material.TNT) {
-                iterator.remove();
-                if (block.getWorld().isChunkLoaded(block.getX() >> 4, block.getZ() >> 4)) {
-                    block.setType(Material.AIR, false);
-                }
-            }
-        }
+        // Leave block mutations to the server's explosion pipeline. Removing TNT
+        // here used to erase blocks without normal explosion/drop protection hooks.
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onBlockIgnite(BlockIgniteEvent event) {
-        if (disableExplosionFire) {
+        if (tntProtectionEnabled && disableExplosionFire) {
             if (event.getCause() == IgniteCause.EXPLOSION) {
                 event.setCancelled(true);
             }

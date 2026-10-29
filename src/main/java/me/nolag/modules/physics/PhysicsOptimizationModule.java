@@ -5,14 +5,11 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import me.nolag.NoLag;
 import me.nolag.platform.SchedulerAdapter.TaskHandle;
-import org.bukkit.Material;
-import org.bukkit.Tag;
 import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
-import org.bukkit.event.block.BlockPhysicsEvent;
 import org.bukkit.event.block.BlockRedstoneEvent;
 
 public final class PhysicsOptimizationModule implements Listener {
@@ -89,7 +86,7 @@ public final class PhysicsOptimizationModule implements Listener {
         }
 
 
-        if (plugin.getTPSMonitor().getTPS() >= Math.min(18.0D, physicsFreezeTps + 3.0D)) {
+        if (plugin.getTPSMonitor().getTPS() >= physicsFreezeTps) {
             return;
         }
 
@@ -119,31 +116,4 @@ public final class PhysicsOptimizationModule implements Listener {
         }
     }
 
-    @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
-    public void onBlockPhysics(BlockPhysicsEvent event) {
-        if (plugin.getTPSMonitor().getTPS() >= physicsFreezeTps) {
-            return;
-        }
-
-        long startNanos = System.nanoTime();
-        try {
-            Material type = event.getChangedType();
-            if (isSuppressedPhysicsType(type)) {
-                event.setCancelled(true);
-            }
-        } finally {
-            if (plugin.getPerformanceAnalyzer() != null && plugin.getPerformanceAnalyzer().isEnabled()) {
-                plugin.getPerformanceAnalyzer().record("Physics", System.nanoTime() - startNanos, 1);
-            }
-        }
-    }
-
-    private boolean isSuppressedPhysicsType(Material type) {
-        if (type == Material.SAND || type == Material.GRAVEL || type == Material.SUSPICIOUS_SAND || type == Material.SUSPICIOUS_GRAVEL
-                || type == Material.ANVIL || type == Material.CHIPPED_ANVIL || type == Material.DAMAGED_ANVIL
-                || type == Material.POINTED_DRIPSTONE || type == Material.DRAGON_EGG) {
-            return true;
-        }
-        return Tag.CONCRETE_POWDER.isTagged(type);
-    }
 }

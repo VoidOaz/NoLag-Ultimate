@@ -1,6 +1,5 @@
 package me.nolag.modules.command;
 
-import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -28,7 +27,7 @@ public final class CommandSecurityModule implements Listener {
     private volatile boolean notifyAdmins = true;
     private volatile String commandFilterMessage = "&cThis command is restricted due to lag risk!";
     private volatile String adminNotifyMessage = "&e[NoLag] Player &c{player} &etried to use restricted command: &c/{command}";
-    private final Set<String> blockedCommands = new HashSet<>();
+    private volatile Set<String> blockedCommands = Set.of();
 
     private volatile boolean elytraProtectionEnabled = true;
     private volatile double elytraTpsThreshold = 15.0;
@@ -52,17 +51,15 @@ public final class CommandSecurityModule implements Listener {
                 "&e[NoLag] Player &c{player} &etried to use restricted command: &c/{command}"
         );
 
-        this.blockedCommands.clear();
+        Set<String> updatedCommands = new java.util.HashSet<>();
         List<String> rawBlocked = cfg.getStringList("advanced-optimization.command-filter.blocked-commands");
         for (String cmd : rawBlocked) {
             if (cmd != null && !cmd.isBlank()) {
-                String clean = cmd.trim().toLowerCase(Locale.ROOT).replace("/", "");
-                blockedCommands.add(clean);
-                if (clean.contains(":")) {
-                    blockedCommands.add(clean.substring(clean.indexOf(':') + 1));
-                }
+                String clean = cmd.trim().toLowerCase(Locale.ROOT).replaceFirst("^/+", "");
+                if (!clean.isBlank() && !clean.contains(" ")) updatedCommands.add(clean);
             }
         }
+        this.blockedCommands = Set.copyOf(updatedCommands);
 
         this.elytraProtectionEnabled = cfg.getBoolean("advanced-optimization.elytra-protection.enabled", true);
         this.elytraTpsThreshold = cfg.getDouble("advanced-optimization.elytra-protection.tps-threshold", 15.0);
@@ -104,10 +101,13 @@ public final class CommandSecurityModule implements Listener {
             return;
         }
 
-        int spaceIdx = raw.indexOf(' ', start);
-        String cmdOnly = spaceIdx > 0 ? raw.substring(start, spaceIdx) : raw.substring(start);
+        int end = start;
+        while (end < raw.length() && !Character.isWhitespace(raw.charAt(end))) end++;
+        String cmdOnly = raw.substring(start, end);
         String strippedCmd = cmdOnly.contains(":") ? cmdOnly.substring(cmdOnly.indexOf(':') + 1) : cmdOnly;
 
+        // A configured bare command also covers namespace aliases (e.g. minecraft:fill).
+        // A namespaced entry matches only that namespace.
         if (blockedCommands.contains(cmdOnly) || blockedCommands.contains(strippedCmd)) {
             event.setCancelled(true);
 
@@ -121,6 +121,7 @@ public final class CommandSecurityModule implements Listener {
                 String prefix = plugin.getConfig().getString("messages.prefix", "&8[&6NoLag&8] ");
                 player.sendMessage(ChatColor.translateAlternateColorCodes('&', prefix + commandFilterMessage));
 
+                plugin.getLogger().warning("[CommandFilter] Blocked restricted command /" + cmdOnly + " by " + player.getName());
                 if (notifyAdmins) {
                     String adminMsg = adminNotifyMessage
                             .replace("{player}", player.getName())
@@ -147,7 +148,6 @@ public final class CommandSecurityModule implements Listener {
                     } else {
                         notifyAdmins.run();
                     }
-                    plugin.getLogger().warning("[CommandFilter] Blocked restricted command /" + cmdOnly + " by " + player.getName());
                 }
             }
         }

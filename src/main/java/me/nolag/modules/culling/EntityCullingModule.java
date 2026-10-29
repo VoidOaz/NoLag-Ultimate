@@ -33,6 +33,7 @@ public final class EntityCullingModule implements Listener {
     private final NoLag plugin;
     private final Map<UUID, Set<UUID>> hiddenEntitiesByPlayer = new ConcurrentHashMap<>();
     private final Map<UUID, Set<UUID>> nearbyEntitiesByPlayer = new ConcurrentHashMap<>();
+    private final Map<UUID, Integer> inspectionCursor = new ConcurrentHashMap<>();
 
     private TaskHandle cullingTask;
     private volatile boolean enabled = true;
@@ -79,6 +80,7 @@ public final class EntityCullingModule implements Listener {
         restoreAllEntities();
         hiddenEntitiesByPlayer.clear();
         nearbyEntitiesByPlayer.clear();
+        inspectionCursor.clear();
     }
 
     public boolean isEnabled() {
@@ -94,7 +96,11 @@ public final class EntityCullingModule implements Listener {
 
         for (Player player : Bukkit.getOnlinePlayers()) {
             if (player == null || !player.isOnline()) continue;
-            if (player.getGameMode() == GameMode.SPECTATOR) continue;
+            // H-01 fix: Restore previously hidden entities if player is now in spectator mode
+            if (player.getGameMode() == GameMode.SPECTATOR) {
+                restoreForPlayer(player);
+                continue;
+            }
 
             UUID playerId = player.getUniqueId();
             Set<UUID> hidden = hiddenEntitiesByPlayer.computeIfAbsent(playerId, ignored -> ConcurrentHashMap.newKeySet());
@@ -105,13 +111,24 @@ public final class EntityCullingModule implements Listener {
             Vector direction = eye.getDirection();
             World world = player.getWorld();
 
-            for (Entity entity : player.getNearbyEntities(maxDistance, maxDistance, maxDistance)) {
+            // Rotate the bounded inspection window so every nearby entity is eventually checked.
+            java.util.List<Entity> nearby = player.getNearbyEntities(maxDistance, maxDistance, maxDistance);
+            for (Entity candidate : nearby) {
+                if (candidate != null && candidate.isValid() && !candidate.isDead()) {
+                    currentNearby.add(candidate.getUniqueId());
+                }
+            }
+            int count = nearby.size();
+            int start = count == 0 ? 0 : Math.floorMod(inspectionCursor.getOrDefault(playerId, 0), count);
+            int inspected = Math.min(64, count);
+            inspectionCursor.put(playerId, count == 0 ? 0 : (start + inspected) % count);
+            for (int i = 0; i < inspected; i++) {
+                Entity entity = nearby.get((start + i) % count);
                 if (entity == null || entity == player || !entity.isValid() || entity.isDead()) continue;
                 if (entity instanceof Player || isExcluded(entity)) continue;
                 if (entity.getWorld() != world) continue;
 
                 UUID id = entity.getUniqueId();
-                currentNearby.add(id);
 
                 Location entityLocation = entity.getLocation();
                 double dx = entityLocation.getX() - eye.getX();
@@ -162,16 +179,45 @@ public final class EntityCullingModule implements Listener {
         try {
             player.hideEntity(plugin, entity);
             totalCulled++;
-        } catch (Throwable ignored) {
+        } catch (Throwable failure) {
+            hidden.remove(id);
         }
     }
 
     private void restoreForPlayer(Player player, Entity entity, Set<UUID> hidden) {
         UUID id = entity.getUniqueId();
-        if (!hidden.remove(id)) return;
+        if (!hidden.contains(id)) return;
         try {
             player.showEntity(plugin, entity);
+            hidden.remove(id);
         } catch (Throwable ignored) {
+            // Keep the record for a retry on the next sweep.
+        }
+    }
+
+    private void restoreForPlayer(Player player) {
+        if (player == null) return;
+        UUID playerId = player.getUniqueId();
+        Set<UUID> hidden = hiddenEntitiesByPlayer.remove(playerId);
+        nearbyEntitiesByPlayer.remove(playerId);
+        inspectionCursor.remove(playerId);
+        if (hidden != null && !hidden.isEmpty()) {
+            for (UUID entityId : hidden) {
+                Entity entity = Bukkit.getEntity(entityId);
+                if (entity != null) {
+                    try {
+                        player.showEntity(plugin, entity);
+                    } catch (Throwable ignored) {
+                    }
+                }
+            }
+        }
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onGameModeChange(org.bukkit.event.player.PlayerGameModeChangeEvent event) {
+        if (event.getNewGameMode() == GameMode.SPECTATOR) {
+            restoreForPlayer(event.getPlayer());
         }
     }
 

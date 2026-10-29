@@ -16,6 +16,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.LongAdder;
 
 
@@ -75,6 +76,8 @@ public final class RedstoneLagDetectorModule implements Listener {
     private final LongAdder detectorErrors = new LongAdder();
 
     private final AtomicBoolean shutdown = new AtomicBoolean(false);
+    private volatile boolean enabled = false;
+    private final AtomicLong nextGlobalProbeNanos = new AtomicLong();
 
     private volatile SchedulerAdapter.TaskHandle maintenanceTask;
     private volatile long lastLogNanos;
@@ -153,13 +156,19 @@ public final class RedstoneLagDetectorModule implements Listener {
         this.singleBlockRateThreshold = Math.max(12, this.clockTriggerCount * 2);
         this.areaAssistedRateThreshold = Math.max(5, (this.clockTriggerCount * 3) / 2);
 
-        startMaintenanceTask();
+        if (owner != null && owner.getConfig() != null) {
+            this.enabled = owner.getConfig().getBoolean("features.anti-lag-machine", true)
+                    && owner.getConfig().getBoolean("features.redstone-lag-detector.enabled", false);
+        }
+
+        if (enabled) startMaintenanceTask();
     }
 
 
     @EventHandler(ignoreCancelled = true, priority = EventPriority.HIGHEST)
     public void onRedstone(BlockRedstoneEvent event) {
-        if (shutdown.get() || event == null || event.isAsynchronous()) {
+        // B-05 fix: Respect anti-lag-machine / enabled flag
+        if (!enabled || shutdown.get() || event == null || event.isAsynchronous()) {
             return;
         }
 
@@ -286,9 +295,14 @@ public final class RedstoneLagDetectorModule implements Listener {
             return DetectionResult.NONE;
         }
 
+        // At most one 26-neighbor API scan per 10 ms globally, even across
+        // multiple redstone regions; skip a probe instead of stalling ticks.
         if (now >= blockHeat.nextProbeNanos) {
-            blockHeat.localMachineWeight = inspectLocalMachine(block);
-            blockHeat.nextProbeNanos = now + PROBE_INTERVAL_NANOS;
+            long next = nextGlobalProbeNanos.get();
+            if (now >= next && nextGlobalProbeNanos.compareAndSet(next, now + 10_000_000L)) {
+                blockHeat.localMachineWeight = inspectLocalMachine(block);
+                blockHeat.nextProbeNanos = now + PROBE_INTERVAL_NANOS;
+            }
         }
 
         final int localWeight = blockHeat.localMachineWeight;
@@ -398,15 +412,17 @@ public final class RedstoneLagDetectorModule implements Listener {
         return duration;
     }
 
+    private static final int[][] CARDINAL_OFFSETS = {
+            {1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}
+    };
+
     private int inspectLocalMachine(Block block) {
         int total = 0;
         int machineryCount = 0;
 
-        for (int i = 0; i < NEIGHBOUR_OFFSETS.length; i += 3) {
-            final int dx = NEIGHBOUR_OFFSETS[i];
-            final int dy = NEIGHBOUR_OFFSETS[i + 1];
-            final int dz = NEIGHBOUR_OFFSETS[i + 2];
-            final Material material = block.getRelative(dx, dy, dz).getType();
+        // P-10 optimization: Check 6 cardinal neighbors first
+        for (int[] offset : CARDINAL_OFFSETS) {
+            final Material material = block.getRelative(offset[0], offset[1], offset[2]).getType();
             final int weight = machineWeight(material);
             total += weight;
             if (weight >= 2) {
@@ -414,6 +430,26 @@ public final class RedstoneLagDetectorModule implements Listener {
             }
         }
 
+        // If no machinery at all in cardinal directions, skip the 20 corners/diagonals
+        if (machineryCount == 0 && total == 0) {
+            return 0;
+        }
+
+        for (int i = 0; i < NEIGHBOUR_OFFSETS.length; i += 3) {
+            final int dx = NEIGHBOUR_OFFSETS[i];
+            final int dy = NEIGHBOUR_OFFSETS[i + 1];
+            final int dz = NEIGHBOUR_OFFSETS[i + 2];
+            // Skip cardinals since already checked
+            if ((dx == 0 && dy == 0) || (dx == 0 && dz == 0) || (dy == 0 && dz == 0)) {
+                continue;
+            }
+            final Material material = block.getRelative(dx, dy, dz).getType();
+            final int weight = machineWeight(material);
+            total += weight;
+            if (weight >= 2) {
+                machineryCount++;
+            }
+        }
 
         if (machineryCount >= 3) {
             total += 2;
@@ -722,6 +758,28 @@ public final class RedstoneLagDetectorModule implements Listener {
     }
 
     public void reload() {
+        if (owner != null && owner.getConfig() != null) {
+            this.enabled = owner.getConfig().getBoolean("features.anti-lag-machine", true)
+                    && owner.getConfig().getBoolean("features.redstone-lag-detector.enabled", false);
+        }
+        for (WorldState state : worlds.values()) {
+            state.blocks.clear();
+            state.chunks.clear();
+        }
+        if (!enabled && maintenanceTask != null) {
+            maintenanceTask.cancel();
+            maintenanceTask = null;
+        } else if (enabled && maintenanceTask == null && !shutdown.get()) {
+            startMaintenanceTask();
+        }
+    }
+
+    public boolean isEnabled() {
+        return enabled;
+    }
+
+    public void setEnabled(boolean enabled) {
+        this.enabled = enabled;
     }
 
 

@@ -1,5 +1,5 @@
 name: NoLag
-version: 21.6.1
+version: 21.6.2
 main: me.nolag.NoLag
 api-version: "1.21"
 author: VoidOaz
@@ -11,7 +11,7 @@ folia-supported: true
 commands:
   nolag:
     description: "Main command for NoLag-Ultimate management and diagnostics."
-    usage: "/nolag <reload|cleanup|ramfix|tps|dashboard|stats|performance|items|plugins|autosave|version>"
+    usage: "/nolag <reload|cleanup|ramfix|tps|dashboard|stats|performance|items|plugins|autosave|netty|version>"
     aliases: [nl, lag, antilag]
     permission: nolag.use
 
@@ -32,6 +32,9 @@ permissions:
       nolag.items: true
       nolag.plugins: true
       nolag.unstack: true
+      nolag.netty: true
+      nolag.netty.admin: true
+      nolag.netty.bypass: true
       nolag.commandfilter.bypass: true
       nolag.commandfilter.notify: true
       nolag.elytra.bypass: true
@@ -103,6 +106,18 @@ permissions:
 
   nolag.flood.bypass:
     description: "Bypasses fluid flood protection."
+    default: op
+
+  nolag.netty:
+    description: "Allows viewing Netty network protection stats and status."
+    default: op
+
+  nolag.netty.admin:
+    description: "Allows managing Netty protection settings and resets."
+    default: op
+
+  nolag.netty.bypass:
+    description: "Bypasses Netty packet and network rate limits."
     default: op
 
 channels:

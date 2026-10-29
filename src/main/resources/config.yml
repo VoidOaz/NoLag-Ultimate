@@ -3,17 +3,13 @@ bstats:
   enabled: true
 
 chunk-optimizer:
-  enabled: false
-  min-chunks: 2
-  max-chunks: 12
-  direction-bias-enabled: true
-  speed-reduction: 2
-  fast-travel-threshold: 1.2
-  max-step-per-cycle: 2
-  hysteresis-chunks: 1
-  rate-limit-enabled: true
-  min-step-cycles: 2
-  async-chunk-prioritization: true
+  # Opt in: prefetch can increase RAM and main-thread chunk lookups.
+  enable-prefetch: false
+  # Uses the server-native chunk pipeline; adapts view, send and simulation distances under load.
+  # On Paper, bounded prefetch may request only already-generated chunks ahead of moving players.
+  # No terrain is speculatively generated and chunks are never force-unloaded by this module.
+  # Defaults to enabled; set false to disable the complete chunk optimization engine.
+  enabled: true
 
 settings:
   tps-threshold: 16.0
@@ -24,24 +20,58 @@ settings:
 
   debug: false
 
-  view-distance:
-    min: 2
-    max: 12
-    tps-low: 15.0
-    tps-high: 18.0
-    recovery-margin: 1.0
-    recovery-checks: 2
-    check-interval-seconds: 20
-    affect-send-distance: true
 
 features:
 
-  entity-culling:
+  netty-protection:
+    # High-performance asynchronous Netty network, packet, and bot attack protection.
+    # Runs directly inside Netty event-loop worker threads; zero main-thread lock contention.
     enabled: true
+    max-packet-rate-per-second: 500
+    # A channel exceeding its token budget is closed. Dropping stateful packets
+    # independently can desynchronize the client and the server.
+    packet-rate-burst: 700
+    disconnect-on-extreme-flood: true
+    extreme-flood-threshold: 1200
+    protect-tab-complete-flood: true
+    max-tab-complete-per-second: 20
+    protect-custom-payload-flood: true
+    max-custom-payload-per-second: 30
+    protect-window-click-flood: true
+    max-window-click-per-second: 60
+    filter-invalid-movement: true
+    filter-crash-packets: true
+    connection-throttle-per-ip-per-second: 25
+    connection-burst-limit: 40
+    # Loopback (127.0.0.1 / ::1) only. Safe to leave on by default.
+    whitelist-local-ips: true
+    # Private/LAN ranges (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16) can be shared by many
+    # real clients behind NAT or a proxy (e.g. BungeeCord/Velocity) — opt-in only.
+    whitelist-site-local-ips: false
+    log-blocked-packets: false
+    whitelisted-ips: []
+    # Hard cap on how many distinct IPs are tracked for connection throttling at once.
+    max-tracked-ips: 50000
+    # Counts decoded handshake/status/login packets until the joined-player guard takes over.
+    # Depends on the server's internal listener layout; falls back to pre-login throttling.
+    early-stage-protection-enabled: true
+    early-stage-max-packets-per-second: 40
+    # Caps how many TCP connections a single IP may hold open at the same time. Enforced the
+    # instant a raw connection is accepted, before login and even before status/ping packets
+    # are processed — the only protection against a raw connection-count flood, since
+    # connection-throttle-per-ip-per-second above only triggers for actual login attempts.
+    # A remote Velocity/Bungee proxy shares one source IP across all players.
+    # Enable only when direct connections are used or the proxy IP is exempted.
+    protect-concurrent-connection-flood: false
+    max-concurrent-connections-per-ip: 10
+
+  entity-culling:
+    # Visibility-only, does not reduce server-side entity AI/ticks.
+    enabled: false
     max-distance: 48.0
     safety-distance: 8.0
     fov-dot-threshold: 0.15
-    tick-interval: 5
+    tick-interval: 20
 
   ram-fixer:
     enabled: true
@@ -51,15 +81,16 @@ features:
     high-threshold-percent: 78.0
     critical-threshold-percent: 88.0
     auto-trim-threshold-percent: 78.0
-    ghost-chunk-eviction: true
+    # Opt-in only. Chunk unload may trigger synchronous saves.
+    ghost-chunk-eviction: false
     dead-entity-sweep: true
     promotion-watchdog: true
     slice-budget-ms: 2
     ghost-chunk-safety-padding: 2
-    allow-explicit-gc: true
-    allow-emergency-gc: true
+    allow-explicit-gc: false
+    allow-emergency-gc: false
     gc-cooldown-seconds: 60
-    manual-gc-after-sweep: true
+    manual-gc-after-sweep: false
     manual-gc-threshold-percent: 30.0
     manual-gc-delay-ticks: 20
     max-manual-chunk-unloads: 512
@@ -85,12 +116,17 @@ features:
     trim-cooldown-seconds: 30
 
   autosave-optimizer:
-    enabled: true
-    disable-vanilla-autosave: true
-    stagger-seconds-between-worlds: 10
-    min-tps-to-save: 15.0
+    # Opt-in only: Vanilla Paper/Minecraft autosave already manages chunk flushing safely.
+    # Enabling this causes periodic manual World.save() calls on the main thread which can
+    # introduce redundant disk I/O spikes. Keep false unless custom staggered saving is specifically required.
+    enabled: false
+    stagger-seconds-between-worlds: 15
+    min-tps-to-save: 16.0
 
   anti-lag-machine: true
+  # Independent, potentially gameplay-altering circuit suppression. Explicit opt-in.
+  redstone-lag-detector:
+    enabled: false
 
   armor-stand-limiter: true
 
@@ -150,9 +186,14 @@ features:
     protect-dispenser-flood: true
     protect-flying-machine-flood: true
     adaptive-limits: true
-    neutralize-fluid: true
-    neutralize-ice: true
-    break-machine-components: true
+    # Neutralization flags:
+    # Emergency chunk throttling stops fluid spread non-destructively.
+    # Physical breaking/clearing requires region/protection clearance.
+    # Legacy toggles retained for config compatibility; existing blocks are NEVER deleted.
+    neutralize-fluid: false
+    neutralize-ice: false
+    # Set to false by default to prevent physical block breaking in claims/structures.
+    break-machine-components: false
     log-violations: false
     player-messages: true
     bypass-permission: "nolag.flood.bypass"
@@ -200,14 +241,18 @@ features:
     vertical-duplication-y: 280
 
 
-  fast-leaf-decay: true
+  # Unavailable until delayed leaf changes can honor claim/region permissions.
+  # Claim/region permissions cannot be checked for delayed extra block breaks.
+  # Vanilla leaf decay remains active; enabling this flag currently logs a warning.
+  fast-leaf-decay: false
   item-stacker: true
   void-teleport: true
   hopper-throttling: true
-  dynamic-view-distance: true
 
   mob-stacker:
-    enabled: true
+    # Virtual merges are intentionally disabled pending a lossless state serializer.
+    # Existing stacks can still unwind. Setting enabled=true does NOT allow new virtual merges.
+    enabled: false
     max-stack-size: 50
     min-mobs-to-stack: 8
     radius: 5.0
@@ -246,30 +291,16 @@ tnt-protection:
   max-primed-tnt-per-chunk: 25
   disable-explosion-fire: true
   yield-zero-threshold: 50
-  yield-zero-value: 0.0
+  # 1.0 preserves vanilla drops. Set lower only if reduced explosion drops are intended.
+  yield-zero-value: 1.0
 
 optimization:
   activation-range:
-    enabled: true
+    # Opt in: modifies mob AI; tagged mobs are restored on reload, load and recovery.
+    enabled: false
     range: 48
     entities-per-run: 500
 
-  chunk-cleaner:
-    enabled: true
-    interval-minutes: 8
-    slice-budget-ms: 1
-    safety-padding: 1
-    budget-ms-per-tick: 2.0
-    player-safe-margin: 2
-    max-protection-radius: 40
-    player-protection-refresh-ticks: 10
-    max-examined-per-cycle: 250000
-    max-unloads-per-cycle: 5000
-    max-unloads-per-tick: 256
-    time-check-every-chunks: 16
-    pause-below-tps: 12.0
-    half-budget-below-tps: 15.0
-    disabled-worlds: []
 
 atlas:
   lag-spike-threshold-ms: 150
@@ -280,7 +311,7 @@ messages:
   reload-success: "&aConfiguration successfully reloaded!"
   no-permission: "&cYou do not have permission to use this command!"
   armor-limit-reached: "&cThis chunk has reached the Armor Stand limit (%limit%)!"
-  low-tps-warning: "&4&lWARNING! &cLow TPS detected (&e%tps%&c). Emergency optimization starting..."
+  low-tps-warning: "&4&lWARNING! &cLow TPS detected (&e%tps%&c). Adaptive optimization is active..."
   mob-separated: "&8[&6NoLag&8] &7- One mob separated! Remaining: &e%amount%"
 
   flood:

@@ -41,7 +41,7 @@ public final class NoLagCommand implements CommandExecutor, TabCompleter {
             sender.sendMessage(color("&8&m----------------------------------------"));
             sender.sendMessage(color("&6&lNoLag-Ultimate &7v" + plugin.getDescription().getVersion() + " &8| &eServer Optimizer"));
             sender.sendMessage(color("&7• Live TPS: " + tpsColor + String.format(Locale.ROOT, "%.2f", tps) + " &7| MSPT: &f" + String.format(Locale.ROOT, "%.2f", mspt) + "ms"));
-            sender.sendMessage(color("&7• Commands: &f/nolag <reload|ramfix|tps|dashboard|stats|performance|items|plugins|autosave|version>"));
+            sender.sendMessage(color("&7• Commands: &f/nolag <reload|cleanup|ramfix|tps|dashboard|stats|performance|items|plugins|autosave|netty|version>"));
             sender.sendMessage(color("&8&m----------------------------------------"));
             return true;
         }
@@ -73,8 +73,13 @@ public final class NoLagCommand implements CommandExecutor, TabCompleter {
                 break;
 
             case "cleanup":
+                if (!sender.hasPermission("nolag.cleanup")) {
+                    sender.sendMessage(noPerm);
+                    return true;
+                }
                 var expiry = plugin.getItemExpiryModule();
-                sender.sendMessage(prefix + color("&ePeriodic global cleanup has been replaced by the zero-lag hidden Item Expiry timer system!"));
+                int queued = expiry != null ? expiry.requestCleanup() : 0;
+                sender.sendMessage(prefix + color("&eCleanup queued " + queued + " expired tracked items for entity-safe removal."));
                 sender.sendMessage(prefix + color("&7Status: " + (expiry != null && expiry.isEnabled() ? "&aActive" : "&cDisabled")
                         + " &8| &7Item Countdown: &e" + (expiry != null ? expiry.getConfiguredLifetimeSeconds() : 180) + "s"
                         + " &8| &7Tracked: &b" + (expiry != null ? expiry.getTrackedItemCount() : 0) + " items"));
@@ -88,9 +93,11 @@ public final class NoLagCommand implements CommandExecutor, TabCompleter {
                     sender.sendMessage(noPerm);
                     return true;
                 }
-                sender.sendMessage(prefix + color("&eStarting RamFixer memory sweep... &7Purging caches and reclaiming unreferenced heap."));
                 boolean started = plugin.getRamFixerModule().startManualSweep(result -> {
-                    Runnable report = () -> sendRamFixSummary(sender, result);
+                    Runnable report = () -> {
+                        if (result == null) sender.sendMessage(prefix + color("&cRamFixer sweep failed. Check the server log."));
+                        else sendRamFixSummary(sender, result);
+                    };
                     if (plugin.getSchedulerAdapter().isFolia()) {
                         if (sender instanceof Player target) {
                             plugin.getSchedulerAdapter().runEntity(target, report);
@@ -102,7 +109,9 @@ public final class NoLagCommand implements CommandExecutor, TabCompleter {
                     }
                 });
                 if (!started) {
-                    sender.sendMessage(prefix + color("&cRamFixer is already running. Please wait for the current sweep to finish."));
+                    sender.sendMessage(prefix + color("&cRamFixer is disabled or a sweep is already running. Check configuration or try again later."));
+                } else {
+                    sender.sendMessage(prefix + color("&eRamFixer sweep started. Heap usage may fluctuate while the server runs."));
                 }
                 break;
 
@@ -150,7 +159,7 @@ public final class NoLagCommand implements CommandExecutor, TabCompleter {
                 } else {
                     for (var entry : samples.entrySet()) {
                         var sample = entry.getValue();
-                        sender.sendMessage(color("&7• " + entry.getKey() + ": &e" + String.format(Locale.ROOT, "%.2f", sample.totalMs()) + "ms total &8| &f" + sample.calls() + " calls &8| est. &b" + String.format(Locale.ROOT, "%.2f", sample.estimatedMspt()) + "mspt"));
+                        sender.sendMessage(color("&7• " + entry.getKey() + ": &e" + String.format(Locale.ROOT, "%.2f", sample.totalMs()) + "ms total &8| &f" + sample.calls() + " calls &8| est. &b" + String.format(Locale.ROOT, "%.2f", sample.estimatedMspt()) + "ms/tick (NoLag code only)"));
                     }
                 }
                 sender.sendMessage(color("&8&m----------------------------------------"));
@@ -194,7 +203,13 @@ public final class NoLagCommand implements CommandExecutor, TabCompleter {
                 sender.sendMessage(folia
                         ? color("&7• Entities/Chunks: &8world-wide counters disabled in Folia safe mode")
                         : color("&7• Entities: &e" + entities + " &7| Chunks: &e" + chunks));
-                sender.sendMessage(color("&7• View Distance: &b" + plugin.getChunkModule().getCurrentViewDistance()));
+                sender.sendMessage(color("&7• View Distance: &b" + plugin.getChunkModule().getCurrentViewDistance()
+                        + " &8| &7Simulation Distance: &b" + plugin.getChunkModule().getCurrentSimulationDistance()));
+                sender.sendMessage(color("&7• Chunk Pressure: &e" + plugin.getChunkModule().getPressureLevel() + "/8"
+                        + " &8| &7Native chunk loads/unloads observed: &e"
+                        + plugin.getChunkModule().getChunkLoadEvents() + "/" + plugin.getChunkModule().getChunkUnloadEvents()));
+                sender.sendMessage(color("&7• Existing-chunk prefetch: &e" + plugin.getChunkModule().getPrefetchCompletions()
+                        + " completed &8| &e" + plugin.getChunkModule().getPrefetchInFlight() + " pending"));
                 sender.sendMessage(color("&8&m----------------------------------------"));
                 break;
 
@@ -245,13 +260,64 @@ public final class NoLagCommand implements CommandExecutor, TabCompleter {
                 sender.sendMessage(prefix + color("&6Autosave Optimizer: &f" + plugin.getAutosaveOptimizerModule().getStatusSummary()));
                 break;
 
+            case "netty":
+            case "network":
+            case "packet":
+                if (!sender.hasPermission("nolag.netty") && !sender.hasPermission("nolag.admin")) {
+                    sender.sendMessage(noPerm);
+                    return true;
+                }
+                var netty = plugin.getNettyProtectionModule();
+                if (netty == null) {
+                    sender.sendMessage(prefix + color("&cNetty Protection Module is not loaded."));
+                    return true;
+                }
+
+                if (args.length > 1) {
+                    String sub = args[1].toLowerCase(Locale.ROOT);
+                    if (sub.equals("reset")) {
+                        if (!sender.hasPermission("nolag.netty.admin") && !sender.hasPermission("nolag.admin")) {
+                            sender.sendMessage(noPerm);
+                            return true;
+                        }
+                        netty.resetStatistics();
+                        sender.sendMessage(prefix + color("&aNetty Protection statistics have been reset!"));
+                        return true;
+                    } else if (sub.equals("reload")) {
+                        if (!sender.hasPermission("nolag.netty.admin") && !sender.hasPermission("nolag.admin")) {
+                            sender.sendMessage(noPerm);
+                            return true;
+                        }
+                        netty.reload();
+                        sender.sendMessage(prefix + color("&aNetty Protection configuration reloaded!"));
+                        return true;
+                    }
+                }
+
+                sender.sendMessage(color("&8&m----------------------------------------"));
+                sender.sendMessage(color("&6&lNetty Enterprise Network & Packet Protection"));
+                sender.sendMessage(color("&7• Status: " + (netty.isEnabled() ? "&aActive (Asynchronous Worker Pipeline)" : "&cDisabled")));
+                sender.sendMessage(color("&7• Guarded Player Connections: &b" + netty.getActiveGuardedChannelCount()));
+                sender.sendMessage(color("&7• Full injection failures (lifetime): &c" + netty.getUnprotectedChannelsCount()));
+                sender.sendMessage(color("&7• Degraded early-guard-only channels: &e" + netty.getActiveDegradedChannelCount()));
+                sender.sendMessage(color("&7• Crash payload inspection: &eheuristic, not exhaustive"));
+                sender.sendMessage(color("&7• Inspected Packets: &e" + netty.getTotalPacketsInspected()));
+                sender.sendMessage(color("&7• Blocked Flood Packets: &c" + netty.getTotalFloodPacketsBlocked()));
+                sender.sendMessage(color("&7• Blocked Crash / Exploit Packets: &c" + netty.getTotalExploitsBlocked()));
+                sender.sendMessage(color("&7• Throttled Bot Handshake Bursts: &c" + netty.getTotalBotBurstsBlocked()));
+                sender.sendMessage(color("&7• Rejected Connection-Flood Sockets: &c" + netty.getTotalConnectionFloodsBlocked()
+                        + " &8(limit " + netty.getMaxConcurrentConnectionsPerIp() + "/ip, " + netty.getTrackedConcurrentConnectionIpCount() + " IPs tracked)"));
+                sender.sendMessage(color("&7• Packet Rate Limit: &f" + netty.getMaxPacketRatePerSecond() + "/s &8(burst " + netty.getPacketRateBurst() + "/s)"));
+                sender.sendMessage(color("&8&m----------------------------------------"));
+                break;
+
             case "version":
                 sender.sendMessage(prefix + color("&7NoLag-Ultimate Version &a" + plugin.getDescription().getVersion()));
                 sender.sendMessage(prefix + color("&7Running on Minecraft &b" + plugin.getVersionChecker().getServerVersionString() + " &7(" + me.nolag.platform.PlatformDetector.getPlatformName(me.nolag.platform.PlatformDetector.detect()) + ")"));
                 break;
 
             default:
-                sender.sendMessage(prefix + color("&cUnknown subcommand. Use: &f/nolag <reload|ramfix|tps|dashboard|stats|performance|items|plugins|autosave|version>"));
+                sender.sendMessage(prefix + color("&cUnknown subcommand. Use: &f/nolag <reload|cleanup|ramfix|tps|dashboard|stats|performance|items|plugins|autosave|netty|version>"));
                 break;
         }
 
@@ -263,7 +329,7 @@ public final class NoLagCommand implements CommandExecutor, TabCompleter {
         sender.sendMessage(color("&6&lRamFixer Optimization Summary:"));
         sender.sendMessage(color("&7• Heap Before: &c" + result.usedBeforeMb() + "MB &7/ &f" + result.maxMb() + "MB (&e" + String.format(Locale.ROOT, "%.1f%%", result.percentBefore()) + "&7)"));
         sender.sendMessage(color("&7• Heap After:  &a" + result.usedAfterMb() + "MB &7/ &f" + result.maxMb() + "MB (&e" + String.format(Locale.ROOT, "%.1f%%", result.percentAfter()) + "&7)"));
-        sender.sendMessage(color("&7• Memory Freed: &a" + result.freedMb() + "MB &7| GC Request: " + (result.gcTriggered() ? "&aIssued" : "&7Skipped")));
+        sender.sendMessage(color("&7• Observed Heap Decrease: &a" + result.freedMb() + "MB &7| GC Request: " + (result.gcTriggered() ? "&aIssued" : "&7Skipped")));
         sender.sendMessage(color("&7• Deep Sweep: &e" + result.chunksScannedInFlight()
                 + " &7chunks inspected, &e" + result.chunksUnloadedThisSweep()
                 + " &7unloaded, &e" + result.deadEntitiesRemovedThisSweep() + " &7dead items removed"));
@@ -273,7 +339,7 @@ public final class NoLagCommand implements CommandExecutor, TabCompleter {
         } else if (result.freedMb() == 0L) {
             sender.sendMessage(color("&7• Result: &eCleanup work completed; heap usage did not show a net decrease in this sample."));
         }
-        sender.sendMessage(color("&7• Lifetime: &a" + plugin.getRamFixerModule().getTotalFreedMb() + "MB freed &8| &e" + plugin.getRamFixerModule().getAutoSweepCount()
+        sender.sendMessage(color("&7• Lifetime: &a" + plugin.getRamFixerModule().getTotalFreedMb() + "MB observed heap decrease &8| &e" + plugin.getRamFixerModule().getAutoSweepCount()
                 + " auto sweeps &8| &e" + plugin.getRamFixerModule().getGhostChunksUnloaded() + " ghost chunks unloaded &8| &e"
                 + plugin.getRamFixerModule().getDeadEntitiesRemoved() + " dead refs swept"));
         sender.sendMessage(color("&8&m----------------------------------------"));
@@ -293,10 +359,21 @@ public final class NoLagCommand implements CommandExecutor, TabCompleter {
             if (sender.hasPermission("nolag.admin") || sender.hasPermission("nolag.plugins")) completions.add("plugins");
             if (sender.hasPermission("nolag.admin")) completions.add("stats");
             if (sender.hasPermission("nolag.admin")) completions.add("autosave");
+            if (sender.hasPermission("nolag.netty") || sender.hasPermission("nolag.admin")) completions.add("netty");
             completions.add("version");
 
             String query = args[0].toLowerCase(Locale.ROOT);
             return completions.stream().filter(s -> s.startsWith(query)).toList();
+        } else if (args.length == 2 && (args[0].equalsIgnoreCase("netty") || args[0].equalsIgnoreCase("network"))) {
+            List<String> sub = new ArrayList<>();
+            sub.add("status");
+            sub.add("stats");
+            if (sender.hasPermission("nolag.netty.admin") || sender.hasPermission("nolag.admin")) {
+                sub.add("reset");
+                sub.add("reload");
+            }
+            String query = args[1].toLowerCase(Locale.ROOT);
+            return sub.stream().filter(s -> s.startsWith(query)).toList();
         }
         return Collections.emptyList();
     }

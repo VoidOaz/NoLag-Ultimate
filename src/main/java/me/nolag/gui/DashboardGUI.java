@@ -57,15 +57,30 @@ public final class DashboardGUI implements Listener {
         String tpsColor = tps >= 18.0 ? "§a" : (tps >= 15.0 ? "§e" : "§c");
         String msptColor = mspt < 40.0 ? "§a" : (mspt < 50.0 ? "§e" : "§c");
 
+        var netty = plugin.getNettyProtectionModule();
+        List<String> nettyLore = List.of(
+                "§7Status: " + (netty != null && netty.isEnabled() ? "§aActive (Async Pipeline)" : "§cDisabled"),
+                "§7Guarded Channels: §b" + (netty != null ? netty.getActiveGuardedChannelCount() : 0),
+                "§7Inspected Packets: §e" + (netty != null ? netty.getTotalPacketsInspected() : 0),
+                "§7Blocked Flood Packets: §c" + (netty != null ? netty.getTotalFloodPacketsBlocked() : 0),
+                "§7Blocked Crash/Exploits: §c" + (netty != null ? netty.getTotalExploitsBlocked() : 0),
+                "§7Throttled Bot Bursts: §c" + (netty != null ? netty.getTotalBotBurstsBlocked() : 0),
+                "§7Rejected Connection Floods: §c" + (netty != null ? netty.getTotalConnectionFloodsBlocked() : 0),
+                "",
+                "§8Protects network off the main tick thread",
+                "§e▶ Click to refresh diagnostics!"
+        );
+        inv.setItem(10, createItem(Material.SHIELD, "§9§lNetty Packet & Bot Guard", nettyLore));
+
         var performanceSnapshot = plugin.getPerformanceAnalyzer().snapshot();
         var performanceLore = new java.util.ArrayList<String>();
         performanceLore.add("§7TPS: " + tpsColor + String.format(Locale.ROOT, "%.2f", tps) + " §7/ §a20.00");
         performanceLore.add("§7MSPT: " + msptColor + String.format(Locale.ROOT, "%.2f", mspt) + " ms");
         performanceLore.add("");
-        for (String system : java.util.List.of("Chunk", "Hopper", "Entities", "Redstone", "Fluid", "Memory")) {
+        for (String system : java.util.List.of("Chunk", "Hopper", "Entities", "Redstone", "Fluid", "Network", "Memory")) {
             var sample = performanceSnapshot.get(system);
             if (sample != null && sample.calls() > 0) {
-                performanceLore.add("§7" + system + ": §e" + String.format(Locale.ROOT, "%.2f", sample.estimatedMspt()) + " ms (est.)");
+                performanceLore.add("§7" + system + ": §e" + String.format(Locale.ROOT, "%.2f", sample.estimatedMspt()) + " ms/tick §8(NoLag code only)");
             }
         }
         inv.setItem(11, createItem(Material.CLOCK, "§b§lPerformance Impact", performanceLore));
@@ -77,11 +92,11 @@ public final class DashboardGUI implements Listener {
         List<String> memLore = new java.util.ArrayList<>(List.of(
                 "§7Heap: " + memColor + memory.usedMb() + " / " + memory.maxMb() + " MB",
                 "§7Usage: " + memColor + String.format(Locale.ROOT, "%.1f%%", memory.usagePercent()),
-                "§7GC activity: §f" + memory.gcActivity(),
+                "§7GC lifetime totals: §f" + memory.gcActivity(),
                 "§7Pressure: §f" + memory.pressure().name().toLowerCase(Locale.ROOT),
                 "§7RamFixer tier: §f" + ramFixer.getPressureTier().name().toLowerCase(Locale.ROOT)
                         + (ramFixer.isSweepRunning() ? " §8(sweeping…)" : ""),
-                "§7Freed (lifetime): §a" + ramFixer.getTotalFreedMb() + " MB",
+                "§7Observed heap decrease: §a" + ramFixer.getTotalFreedMb() + " MB",
                 "§7Ghost chunks: §e" + ramFixer.getGhostChunksUnloaded() + " §8| §7Auto sweeps: §e" + ramFixer.getAutoSweepCount(),
                 "",
                 "§e▶ Click to run RamFixer memory sweep!"
@@ -106,6 +121,8 @@ public final class DashboardGUI implements Listener {
                     "§7World-wide entity/chunk totals: §8disabled",
                     "§7Online player count: §8managed by Folia",
                     "§7View Distance: §b" + plugin.getChunkModule().getCurrentViewDistance(),
+                    "§7Simulation Distance: §b" + plugin.getChunkModule().getCurrentSimulationDistance(),
+                    "§7Chunk Pressure: §e" + plugin.getChunkModule().getPressureLevel() + "/8",
                     "",
                     "§8Global scans are disabled in Folia mode for thread safety"
                 )
@@ -114,8 +131,11 @@ public final class DashboardGUI implements Listener {
                     "§7Loaded Chunks: §e" + totalChunks,
                     "§7Online Players: §a" + onlinePlayers,
                     "§7View Distance: §b" + plugin.getChunkModule().getCurrentViewDistance(),
+                    "§7Simulation Distance: §b" + plugin.getChunkModule().getCurrentSimulationDistance(),
+                    "§7Chunk Pressure: §e" + plugin.getChunkModule().getPressureLevel() + "/8",
+                    "§7Prefetch in flight: §e" + plugin.getChunkModule().getPrefetchInFlight(),
                     "",
-                    "§8Live NoLag activity is sampled with low overhead"
+                    "§8Native chunk activity is tracked with bounded overhead"
                 );
         inv.setItem(15, createItem(Material.BEACON, "§6§lWorld & Entity Stats", worldLore));
 
@@ -123,7 +143,7 @@ public final class DashboardGUI implements Listener {
         List<String> pluginLore = new java.util.ArrayList<>();
         pluginLore.add("§7Server TPS: §b" + String.format(Locale.ROOT, "%.2f", tps));
         pluginLore.add("§7Server MSPT: §b" + String.format(Locale.ROOT, "%.2f", mspt) + " ms");
-        pluginLore.add("§7Stack samples: §e" + (watcher == null ? 0L : watcher.getTotalStackSamples()));
+        pluginLore.add("§7Stack samples (main thread only): §e" + (watcher == null ? 0L : watcher.getTotalStackSamples()));
         pluginLore.add("");
         if (watcher != null && watcher.getTotalStackSamples() < 4L) {
             pluginLore.add("§eProfiler is warming up");
@@ -194,7 +214,9 @@ public final class DashboardGUI implements Listener {
                 return;
             }
 
-            if (slot == 11) {
+            // Bukkit inventory mutations must run after the click event has completed.
+            plugin.getSchedulerAdapter().runEntityLater(player, () -> {
+            if (slot == 10 || slot == 11 || slot == 15 || slot == 17) {
                 open(player);
                 return;
             }
@@ -209,9 +231,10 @@ public final class DashboardGUI implements Listener {
 
                 if (player.hasPermission("nolag.admin")) {
                     player.closeInventory();
-                    player.sendMessage(ChatColor.translateAlternateColorCodes('&', "&8[&6NoLag&8] &eRunning RamFixer optimization... The final result will be reported when finished."));
                     boolean started = plugin.getRamFixerModule().startManualSweep(res -> {
-                        Runnable report = () -> player.sendMessage(ChatColor.translateAlternateColorCodes('&', "&8[&6NoLag&8] &aRamFixer complete! Net heap reclaimed: &e" + res.freedMb()
+                        Runnable report = () -> player.sendMessage(res == null
+                                ? ChatColor.translateAlternateColorCodes('&', "&8[&6NoLag&8] &cRamFixer sweep failed. Check the server log.")
+                                : ChatColor.translateAlternateColorCodes('&', "&8[&6NoLag&8] &aRamFixer complete! Net heap reclaimed: &e" + res.freedMb()
                                 + "MB &7| chunks inspected: &e" + res.chunksScannedInFlight()
                                 + " &7| chunks unloaded: &e" + res.chunksUnloadedThisSweep()
                                 + " &7| dead items removed: &e" + res.deadEntitiesRemovedThisSweep()
@@ -223,7 +246,9 @@ public final class DashboardGUI implements Listener {
                             report.run();
                         }
                     });
-                    if (!started) {
+                    if (started) {
+                        player.sendMessage(ChatColor.translateAlternateColorCodes('&', "&8[&6NoLag&8] &eRunning RamFixer optimization... The final result will be reported when finished."));
+                    } else {
                         player.sendMessage(ChatColor.translateAlternateColorCodes('&', "&8[&6NoLag&8] &cRamFixer is already running or unavailable in this platform mode."));
                     }
                 } else {
@@ -247,6 +272,7 @@ public final class DashboardGUI implements Listener {
                     player.sendMessage(ChatColor.RED + "You do not have permission to reload!");
                 }
             }
+            }, 1L);
         }
     }
 

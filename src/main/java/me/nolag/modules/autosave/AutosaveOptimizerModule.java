@@ -13,9 +13,6 @@ import org.bukkit.event.world.WorldUnloadEvent;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
-import java.util.HashMap;
-import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 
 
@@ -23,20 +20,19 @@ public final class AutosaveOptimizerModule implements Listener {
 
     private final NoLag plugin;
 
-    private volatile boolean enabled = true;
-    private volatile boolean disableVanillaAutosave = true;
+    private volatile boolean enabled = false;
     private volatile long staggerIntervalTicks = 200L;
     private volatile double minTpsToSave = 15.0;
 
     private TaskHandle cycleTask;
     private final List<String> cursorWorldNames = new ArrayList<>();
 
-    private final Map<UUID, Boolean> originalAutosave = new HashMap<>();
     private int cursor;
 
     private final AtomicInteger savesPerformed = new AtomicInteger();
     private final AtomicInteger savesSkippedLowTps = new AtomicInteger();
     private volatile long lastSaveStartedAt;
+    private volatile long lastSaveDurationMs;
     private volatile String lastSavedWorldName = "-";
 
     public AutosaveOptimizerModule(NoLag plugin) {
@@ -46,13 +42,22 @@ public final class AutosaveOptimizerModule implements Listener {
 
     public void reload() {
         var cfg = plugin.getConfig();
-        this.enabled = cfg.getBoolean("features.autosave-optimizer.enabled", true);
-        this.disableVanillaAutosave = cfg.getBoolean("features.autosave-optimizer.disable-vanilla-autosave", true);
+        // P-01: Default to disabled to avoid redundant concurrent disk I/O on top of vanilla autosave.
+        // Native autosave is authoritative; do not schedule supplemental full-world flushes.
+        this.enabled = false;
+        if (cfg.getBoolean("features.autosave-optimizer.enabled", false)) {
+            plugin.getLogger().warning("Supplemental autosave is unavailable; native server autosave remains active.");
+        }
+        // S-02: Clean handling of deprecated key
+        if (cfg.contains("features.autosave-optimizer.disable-vanilla-autosave")) {
+            cfg.set("features.autosave-optimizer.disable-vanilla-autosave", null);
+            plugin.saveConfig();
+        }
 
-        long staggerSeconds = Math.max(2L, cfg.getLong("features.autosave-optimizer.stagger-seconds-between-worlds", 10L));
+        long staggerSeconds = Math.max(2L, cfg.getLong("features.autosave-optimizer.stagger-seconds-between-worlds", 15L));
         this.staggerIntervalTicks = staggerSeconds * 20L;
 
-        this.minTpsToSave = clamp(cfg.getDouble("features.autosave-optimizer.min-tps-to-save", 15.0), 1.0, 20.0);
+        this.minTpsToSave = clamp(cfg.getDouble("features.autosave-optimizer.min-tps-to-save", 16.0), 1.0, 20.0);
     }
 
     public void start() {
@@ -61,7 +66,6 @@ public final class AutosaveOptimizerModule implements Listener {
             return;
         }
 
-        applyVanillaAutosaveState();
         refreshWorldCursor();
 
         cycleTask = plugin.getSchedulerAdapter().runGlobalTimer(this::cycle, staggerIntervalTicks, staggerIntervalTicks);
@@ -72,36 +76,6 @@ public final class AutosaveOptimizerModule implements Listener {
             cycleTask.cancel();
             cycleTask = null;
         }
-        restoreVanillaAutosaveState();
-    }
-
-    private void applyVanillaAutosaveState() {
-        if (!disableVanillaAutosave) {
-            return;
-        }
-        for (World world : Bukkit.getWorlds()) {
-            try {
-                originalAutosave.putIfAbsent(world.getUID(), world.isAutoSave());
-                world.setAutoSave(false);
-            } catch (Throwable ignored) {
-            }
-        }
-    }
-
-    private void restoreVanillaAutosaveState() {
-
-
-        if (originalAutosave.isEmpty()) return;
-        for (World world : Bukkit.getWorlds()) {
-            try {
-                Boolean previous = originalAutosave.remove(world.getUID());
-                if (previous != null) {
-                    world.setAutoSave(previous);
-                }
-            } catch (Throwable ignored) {
-            }
-        }
-        originalAutosave.clear();
     }
 
     private void refreshWorldCursor() {
@@ -115,59 +89,13 @@ public final class AutosaveOptimizerModule implements Listener {
     }
 
     private void cycle() {
-        if (!enabled || plugin.getSchedulerAdapter().isFolia()) {
-            return;
-        }
-
-        if (cursorWorldNames.isEmpty()) {
-            refreshWorldCursor();
-            if (cursorWorldNames.isEmpty()) {
-                return;
-            }
-        }
-
-        if (cursor >= cursorWorldNames.size()) {
-            refreshWorldCursor();
-            if (cursorWorldNames.isEmpty()) {
-                return;
-            }
-        }
-
-        String targetName = cursorWorldNames.get(cursor++);
-        World target = Bukkit.getWorld(targetName);
-        if (target == null) {
-
-            return;
-        }
-
-        double tps = plugin.getTPSMonitor() != null ? plugin.getTPSMonitor().getTPS() : 20.0;
-        if (tps < minTpsToSave) {
-            savesSkippedLowTps.incrementAndGet();
-            return;
-        }
-
-        lastSaveStartedAt = System.currentTimeMillis();
-        lastSavedWorldName = target.getName();
-        try {
-            target.save();
-            savesPerformed.incrementAndGet();
-        } catch (Throwable t) {
-            plugin.getLogger().warning("[AutosaveOptimizer] Failed to save world '" + target.getName() + "': " + t.getMessage());
-        }
+        // No manual world saves. Server autosave remains enabled and authoritative.
     }
 
     @EventHandler(priority = EventPriority.MONITOR)
     public void onWorldLoad(WorldLoadEvent event) {
         if (!enabled || plugin.getSchedulerAdapter().isFolia()) {
             return;
-        }
-        if (disableVanillaAutosave) {
-            try {
-                World world = event.getWorld();
-                originalAutosave.putIfAbsent(world.getUID(), world.isAutoSave());
-                world.setAutoSave(false);
-            } catch (Throwable ignored) {
-            }
         }
         refreshWorldCursor();
     }
@@ -181,16 +109,20 @@ public final class AutosaveOptimizerModule implements Listener {
         return enabled && !plugin.getSchedulerAdapter().isFolia();
     }
 
+    public long getLastSaveDurationMs() {
+        return lastSaveDurationMs;
+    }
+
     public String getStatusSummary() {
         if (plugin.getSchedulerAdapter().isFolia()) {
             return "Disabled on Folia (each region manages its own save cadence).";
         }
         if (!enabled) {
-            return "Disabled in configuration.";
+            return "Native server autosave in use; supplemental World.save() disabled.";
         }
         long secondsAgo = lastSaveStartedAt == 0L ? -1L : Math.max(0L, (System.currentTimeMillis() - lastSaveStartedAt) / 1000L);
         return String.format(Locale.ROOT,
-                "Active | Worlds staggered: %d | Saves: %d | Skipped (low TPS): %d | Last: %s%s",
+                "Active (supplemental; world autosave settings untouched) | Worlds staggered: %d | Saves: %d | Skipped (low TPS): %d | Last: %s%s",
                 cursorWorldNames.size(), savesPerformed.get(), savesSkippedLowTps.get(), lastSavedWorldName,
                 secondsAgo < 0 ? "" : " (" + secondsAgo + "s ago)");
     }

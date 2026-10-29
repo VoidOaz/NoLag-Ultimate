@@ -64,9 +64,9 @@ public final class RamFixerModule implements Listener, RamFixerService {
     private volatile boolean ghostChunkEvictionEnabled = true;
     private volatile boolean deadEntitySweepEnabled = true;
     private volatile boolean promotionWatchdogEnabled = true;
-    private volatile boolean allowExplicitGcOnManualCommand = true;
-    private volatile boolean allowEmergencyGc = true;
-    private volatile boolean manualGcAfterSweep = true;
+    private volatile boolean allowExplicitGcOnManualCommand = false;
+    private volatile boolean allowEmergencyGc = false;
+    private volatile boolean manualGcAfterSweep = false;
     private volatile double manualGcThresholdPercent = 60.0;
     private volatile long manualGcDelayTicks = 20L;
     private volatile int maxManualChunkUnloads = 512;
@@ -128,9 +128,9 @@ public final class RamFixerModule implements Listener, RamFixerService {
         ghostChunkEvictionEnabled = cfg.getBoolean("features.ram-fixer.ghost-chunk-eviction", true);
         deadEntitySweepEnabled = cfg.getBoolean("features.ram-fixer.dead-entity-sweep", true);
         promotionWatchdogEnabled = cfg.getBoolean("features.ram-fixer.promotion-watchdog", true);
-        allowExplicitGcOnManualCommand = cfg.getBoolean("features.ram-fixer.allow-explicit-gc", true);
-        allowEmergencyGc = cfg.getBoolean("features.ram-fixer.allow-emergency-gc", true);
-        manualGcAfterSweep = cfg.getBoolean("features.ram-fixer.manual-gc-after-sweep", true);
+        allowExplicitGcOnManualCommand = cfg.getBoolean("features.ram-fixer.allow-explicit-gc", false);
+        allowEmergencyGc = cfg.getBoolean("features.ram-fixer.allow-emergency-gc", false);
+        manualGcAfterSweep = cfg.getBoolean("features.ram-fixer.manual-gc-after-sweep", false);
         manualGcThresholdPercent = clampDouble(
                 cfg.getDouble("features.ram-fixer.manual-gc-threshold-percent", 50.0), 30.0, 95.0);
         manualGcDelayTicks = clampLong(
@@ -154,11 +154,30 @@ public final class RamFixerModule implements Listener, RamFixerService {
         if (!enabled) {
             return;
         }
+        if (plugin.getSchedulerAdapter().isFolia()) {
+            initFoliaLoadedChunks();
+        }
         monitorTask = plugin.getSchedulerAdapter().runGlobalTimer(
                 this::heartbeat,
                 monitorIntervalTicks,
                 monitorIntervalTicks
         );
+    }
+
+    // Only entity schedulers may read Folia player locations. Other chunks
+    // already loaded before plugin startup remain unknown (see COMPATIBILITY.md).
+    private void initFoliaLoadedChunks() {
+        if (!plugin.getSchedulerAdapter().isFolia()) return;
+        for (Player player : Bukkit.getOnlinePlayers()) {
+            plugin.getSchedulerAdapter().runEntity(player, () -> {
+                updateFoliaPlayerPosition(player);
+                if (player.isOnline()) {
+                    Location loc = player.getLocation();
+                    foliaLoadedChunks.add(new FoliaChunkKey(loc.getWorld().getUID(),
+                            loc.getBlockX() >> 4, loc.getBlockZ() >> 4));
+                }
+            });
+        }
     }
 
     public void stop() {
@@ -314,6 +333,7 @@ public final class RamFixerModule implements Listener, RamFixerService {
 
         Chunk activeChunk;
         Entity[] activeEntities;
+        boolean activeHasBlockingEntity;
         int entityCursor;
         int chunksScanned;
         int chunksUnloaded;
@@ -355,6 +375,7 @@ public final class RamFixerModule implements Listener, RamFixerService {
                 }
                 activeChunk = null;
                 activeEntities = null;
+                activeHasBlockingEntity = false;
                 entityCursor = 0;
                 rebuildProximity(candidate);
                 return;
@@ -447,6 +468,10 @@ public final class RamFixerModule implements Listener, RamFixerService {
         }
         cancelSliceTask();
         sliceTask = plugin.getSchedulerAdapter().runGlobalTimer(this::processSlice, 1L, 1L);
+        if (sliceTask == null || sliceTask.isCancelled()) {
+            activeSweep = null;
+            return false;
+        }
         return true;
     }
 
@@ -461,6 +486,10 @@ public final class RamFixerModule implements Listener, RamFixerService {
         manualSweepCount++;
         cancelSliceTask();
         sliceTask = plugin.getSchedulerAdapter().runGlobalTimer(this::processSlice, 1L, 1L);
+        if (sliceTask == null || sliceTask.isCancelled()) {
+            activeSweep = null;
+            return false;
+        }
         return true;
     }
 
@@ -487,9 +516,8 @@ public final class RamFixerModule implements Listener, RamFixerService {
             if (activeSweep == state) {
                 activeSweep = null;
             }
-            if (verboseLogging) {
-                log("[RamFixer] Sweep aborted safely after " + failure.getClass().getSimpleName());
-            }
+            log("[RamFixer] Sweep aborted after " + failure.getClass().getSimpleName());
+            if (state.completion != null) state.completion.accept(null);
         }
     }
 
@@ -503,8 +531,12 @@ public final class RamFixerModule implements Listener, RamFixerService {
         boolean inspectEntities = entityCleanup || ghostChunkEvictionEnabled || state.manual;
         int padding = ghostChunkSafetyPaddingChunks;
 
+        int chunksProcessedThisSlice = 0;
+        int unloadsThisSlice = 0;
+
         while (state.currentWorld != null) {
-            if (System.nanoTime() >= deadline) {
+            // P-04 fix: strict per-slice processing limits to protect tick time budget
+            if (++chunksProcessedThisSlice > 8 || unloadsThisSlice >= 1 || System.nanoTime() >= deadline) {
                 return;
             }
 
@@ -532,6 +564,7 @@ public final class RamFixerModule implements Listener, RamFixerService {
                 return;
             }
 
+            boolean hasBlockingEntity = state.activeHasBlockingEntity;
             if (inspectEntities) {
                 if (state.activeEntities == null) {
                     try {
@@ -555,18 +588,25 @@ public final class RamFixerModule implements Listener, RamFixerService {
                             state.deadRemoved++;
                         } catch (Throwable ignored) {
                         }
+                    } else if (entity != null && entity.isValid() && !entity.isDead()) {
+                        // Skip unloading any chunk containing a real living/active entity.
+                        // The entity array can be processed over multiple ticks.
+                        hasBlockingEntity = true;
                     }
+                    state.activeHasBlockingEntity = hasBlockingEntity;
                     if (System.nanoTime() >= deadline) {
                         return;
                     }
                 }
-                if (state.activeEntities.length > 0) {
+                // Only a chunk with no remaining live entities may be evicted.
+                // Never infer safety from the length of an entity snapshot alone.
+                if (hasBlockingEntity) {
                     clearActiveChunk(state);
                     continue;
                 }
             }
 
-            boolean canEvict = ghostChunkEvictionEnabled || state.manual;
+            boolean canEvict = ghostChunkEvictionEnabled;
             if (canEvict) {
                 boolean nearSpawn = state.spawnChunkX != Integer.MIN_VALUE
                         && Math.abs(chunk.getX() - state.spawnChunkX) <= 2
@@ -582,6 +622,7 @@ public final class RamFixerModule implements Listener, RamFixerService {
                             try {
                                 if (chunk.unload(true)) {
                                     state.chunksUnloaded++;
+                                    unloadsThisSlice++;
                                 }
                             } catch (Throwable ignored) {
                             }
@@ -599,6 +640,7 @@ public final class RamFixerModule implements Listener, RamFixerService {
     private void clearActiveChunk(SweepState state) {
         state.activeChunk = null;
         state.activeEntities = null;
+        state.activeHasBlockingEntity = false;
         state.entityCursor = 0;
     }
 
@@ -623,8 +665,9 @@ public final class RamFixerModule implements Listener, RamFixerService {
 
             final boolean finalGcTriggered = gcTriggered;
             if (s.completion != null) {
-                plugin.getSchedulerAdapter().runGlobalLater(
+                TaskHandle finishTask = plugin.getSchedulerAdapter().runGlobalLater(
                         () -> finishManualSweep(s, finalGcTriggered), Math.max(15L, manualGcDelayTicks));
+                if (finishTask == null || finishTask.isCancelled()) s.completion.accept(null);
             } else {
                 plugin.getSchedulerAdapter().runGlobalLater(
                         () -> finalizeSweepTelemetry(s, finalGcTriggered), Math.max(15L, manualGcDelayTicks));
@@ -637,6 +680,7 @@ public final class RamFixerModule implements Listener, RamFixerService {
 
     private void finishManualSweep(SweepState s, boolean gcTriggered) {
         if (!enabled) {
+            if (s.completion != null) s.completion.accept(null);
             return;
         }
         finalizeSweepTelemetry(s, gcTriggered);
@@ -754,7 +798,8 @@ public final class RamFixerModule implements Listener, RamFixerService {
         foliaSweepState = state;
         foliaDispatchTask = plugin.getSchedulerAdapter().runGlobalTimer(
                 this::dispatchFoliaSweepSlice, 1L, 1L);
-        if (foliaDispatchTask.isCancelled()) {
+        if (foliaDispatchTask == null || foliaDispatchTask.isCancelled()) {
+            if (completion != null) completion.accept(null);
             foliaSweepState = null;
             synchronized (this) {
                 foliaManualSweepRunning = false;
@@ -846,7 +891,7 @@ public final class RamFixerModule implements Listener, RamFixerService {
                     hasLiveEntity = true;
                 }
             }
-            if (!hasLiveEntity && chunk.unload(true)) {
+            if (ghostChunkEvictionEnabled && !hasLiveEntity && chunk.unload(true)) {
                 state.unloaded.incrementAndGet();
                 foliaLoadedChunks.remove(key);
             }

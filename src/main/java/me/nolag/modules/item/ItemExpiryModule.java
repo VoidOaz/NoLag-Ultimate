@@ -1,6 +1,7 @@
 package me.nolag.modules.item;
 
 import me.nolag.NoLag;
+import me.nolag.platform.SchedulerAdapter;
 import me.nolag.platform.SchedulerAdapter.TaskHandle;
 import org.bukkit.Chunk;
 import org.bukkit.NamespacedKey;
@@ -24,6 +25,7 @@ import java.lang.ref.WeakReference;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
 
 
 public final class ItemExpiryModule implements Listener {
@@ -33,6 +35,10 @@ public final class ItemExpiryModule implements Listener {
     private final NoLag plugin;
     private final NamespacedKey expireKey;
     private final Map<UUID, ExpiryEntry> trackedItems = new ConcurrentHashMap<>();
+    private final ConcurrentLinkedQueue<UUID> sweepQueue = new ConcurrentLinkedQueue<>();
+    private final java.util.Set<UUID> queuedIds = ConcurrentHashMap.newKeySet();
+    private final Map<UUID, Long> pendingExpirations = new ConcurrentHashMap<>();
+    private SchedulerAdapter.TaskHandle sweepTask;
 
     private volatile boolean enabled = true;
     private volatile int lifetimeSeconds = DEFAULT_LIFETIME_SECONDS;
@@ -66,97 +72,88 @@ public final class ItemExpiryModule implements Listener {
 
 
     public void start() {
-        cancelScheduledTasks(false);
+        stop();
         reload();
         if (!enabled) {
             trackedItems.clear();
             return;
         }
-        rescheduleTrackedItems();
+        // P-05 fix: Use a centralized timer sweep instead of allocating thousands of individual task handles
+        sweepTask = plugin.getSchedulerAdapter().runGlobalTimer(this::performExpirySweep, 20L, 1L);
     }
 
-
     public void stop() {
+        if (sweepTask != null) {
+            sweepTask.cancel();
+            sweepTask = null;
+        }
         cancelScheduledTasks(true);
     }
 
-    private void cancelScheduledTasks(boolean clearEntries) {
-        for (ExpiryEntry entry : trackedItems.values()) {
-            if (entry != null && entry.task() != null) {
-                try {
-                    entry.task().cancel();
-                } catch (Throwable ignored) {
-                }
+    private void performExpirySweep() {
+        sweepExpired(128);
+    }
+
+    /** Queue a bounded manual cleanup of expired tracked items. Returns the tasks accepted. */
+    public int requestCleanup() {
+        return sweepExpired(2048);
+    }
+
+    private int sweepExpired(int budget) {
+        if (!enabled) return 0;
+        int scheduled = 0;
+        long now = System.currentTimeMillis();
+        // Process a bounded, rotating set of entries. Re-queue only still-tracked
+        // items, otherwise a fixed prefix could starve later items forever.
+        int toInspect = Math.min(budget, sweepQueue.size());
+        for (int i = 0; i < toInspect; i++) {
+            UUID id = sweepQueue.poll();
+            if (id == null) return scheduled;
+            queuedIds.remove(id);
+            ExpiryEntry entry = trackedItems.get(id);
+            if (entry == null) continue;
+            Item item = entry.getItem();
+            if (item == null) {
+                trackedItems.remove(id, entry);
+                continue;
             }
+            // Retry entity tasks that were cancelled without executing their callback.
+            if (now >= entry.expireAtMillis() && pendingExpirations.compute(id,
+                    (ignored, since) -> since == null || now - since > 10_000L ? now : since) == now) {
+                TaskHandle handle = plugin.getSchedulerAdapter().runEntity(item, () -> {
+                    try {
+                        processScheduledExpiry(id, entry.expireAtMillis());
+                    } finally {
+                        pendingExpirations.remove(id, now);
+                    }
+                });
+                if (handle == null || handle.isCancelled()) pendingExpirations.remove(id, now);
+                else scheduled++;
+            }
+            if (trackedItems.containsKey(id) && queuedIds.add(id)) sweepQueue.offer(id);
         }
+        return scheduled;
+    }
+
+    private void cancelScheduledTasks(boolean clearEntries) {
         if (clearEntries) {
             trackedItems.clear();
+            sweepQueue.clear();
+            queuedIds.clear();
+            pendingExpirations.clear();
         }
     }
-
-    private void rescheduleTrackedItems() {
-        boolean folia = plugin.getSchedulerAdapter().isFolia();
-        for (Map.Entry<UUID, ExpiryEntry> mapEntry : trackedItems.entrySet()) {
-            UUID id = mapEntry.getKey();
-            ExpiryEntry current = mapEntry.getValue();
-            if (current == null) {
-                trackedItems.remove(id);
-                continue;
-            }
-
-            Item item = current.getItem();
-            if (item == null) {
-                trackedItems.remove(id, current);
-                continue;
-            }
-
-            if (folia) {
-
-
-                TaskHandle validation = plugin.getSchedulerAdapter().runEntity(item, () -> {
-                    if (trackedItems.get(id) != current) return;
-                    if (!item.isValid() || item.isDead()) {
-                        trackedItems.remove(id, current);
-                        return;
-                    }
-                    scheduleExpiry(item, current.expireAtMillis());
-                });
-                if (validation == TaskHandle.EMPTY) {
-                    trackedItems.remove(id, current);
-                }
-            } else {
-                if (!item.isValid() || item.isDead()) {
-                    trackedItems.remove(id, current);
-                    continue;
-                }
-                scheduleExpiry(item, current.expireAtMillis());
-            }
-        }
-    }
-
 
     public void trimCaches() {
-        boolean folia = plugin.getSchedulerAdapter().isFolia();
-        if (folia) {
-
-
+        // Do not touch Folia-owned entity state from a global cleanup thread.
+        if (plugin.getSchedulerAdapter().isFolia()) {
+            trackedItems.entrySet().removeIf(entry -> entry.getValue().getItem() == null);
+        } else {
             trackedItems.entrySet().removeIf(entry -> {
-                ExpiryEntry expiry = entry.getValue();
-                return expiry == null
-                        || expiry.getItem() == null
-                        || (expiry.task() != null && expiry.task().isCancelled());
+                Item item = entry.getValue().getItem();
+                return item == null || !item.isValid() || item.isDead();
             });
-            return;
         }
-
-        trackedItems.entrySet().removeIf(entry -> {
-            ExpiryEntry expiry = entry.getValue();
-            if (expiry == null) return true;
-            Item item = expiry.getItem();
-            if (item == null || !item.isValid() || item.isDead()) return true;
-            TaskHandle task = expiry.task();
-            return task != null && task.isCancelled();
-        });
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -236,21 +233,21 @@ public final class ItemExpiryModule implements Listener {
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onItemMerge(ItemMergeEvent event) {
         if (!enabled) return;
-
         Item source = event.getEntity();
         Item target = event.getTarget();
-        if (source == null || target == null || !source.isValid() || !target.isValid()) return;
-
-        long now = System.currentTimeMillis();
-        long fallback = now + getConfiguredLifetimeMillis();
+        if (source == null || target == null) return;
+        long fallback = System.currentTimeMillis() + getConfiguredLifetimeMillis();
         long sourceExpiry = getStoredExpiry(source, fallback);
         long targetExpiry = getStoredExpiry(target, fallback);
-
-        unregisterItem(source.getUniqueId());
-
-
-        long mergedExpiry = Math.max(sourceExpiry, targetExpiry);
-        registerItemAt(target, mergedExpiry);
+        UUID sourceId = source.getUniqueId();
+        // MONITOR is not a reliable commit boundary: other MONITOR handlers
+        // may still cancel the merge. Reconcile only after vanilla has committed.
+        plugin.getSchedulerAdapter().runEntityLater(target, () -> {
+            if (!enabled || !target.isValid() || target.isDead()) return;
+            if (source.isValid() && !source.isDead()) return; // merge was cancelled
+            unregisterItem(sourceId);
+            registerItemAt(target, Math.max(sourceExpiry, targetExpiry));
+        }, 1L);
     }
 
     public boolean isEnabled() {
@@ -297,13 +294,7 @@ public final class ItemExpiryModule implements Listener {
 
     public void unregisterItem(UUID uuid) {
         if (uuid == null) return;
-        ExpiryEntry entry = trackedItems.remove(uuid);
-        if (entry != null && entry.task() != null) {
-            try {
-                entry.task().cancel();
-            } catch (Throwable ignored) {
-            }
-        }
+        trackedItems.remove(uuid);
     }
 
     public void registerItem(Item item) {
@@ -316,62 +307,47 @@ public final class ItemExpiryModule implements Listener {
         registerItemAt(item, expiry);
     }
 
+    /** Keep the persistent timestamp and the sweep entry in sync on the entity owner thread. */
+    public void updateExpiry(Item item, long expiryAtMillis) {
+        registerItemAt(item, expiryAtMillis);
+    }
+
     private void registerItemAt(Item item, long expiryAtMillis) {
         if (!enabled || item == null || !item.isValid() || item.isDead()) return;
-
-        long expiry = Math.max(System.currentTimeMillis() + 500L, expiryAtMillis);
-
-
-        item.getPersistentDataContainer().set(expireKey, PersistentDataType.LONG, expiry);
-
+        item.getPersistentDataContainer().set(expireKey, PersistentDataType.LONG, expiryAtMillis);
         UUID id = item.getUniqueId();
-        ExpiryEntry previous = trackedItems.get(id);
-        if (previous != null && previous.task() != null) {
-            try {
-                previous.task().cancel();
-            } catch (Throwable ignored) {
-            }
-        }
-
-        ExpiryEntry entry = new ExpiryEntry(new WeakReference<>(item), expiry, null);
+        ExpiryEntry entry = new ExpiryEntry(new WeakReference<>(item), expiryAtMillis);
         trackedItems.put(id, entry);
-        scheduleExpiry(item, expiry);
+        if (queuedIds.add(id)) sweepQueue.offer(id);
     }
 
-    private void scheduleExpiry(Item item, long expiryAtMillis) {
-        if (!enabled || item == null || !item.isValid()) return;
-
-        long remainingMs = expiryAtMillis - System.currentTimeMillis();
-
-        long delayTicks = Math.max(1L, (remainingMs + 49L) / 50L);
-
-        UUID id = item.getUniqueId();
-
-        TaskHandle handle = plugin.getSchedulerAdapter().runEntityLater(item, () -> processScheduledExpiry(id), delayTicks);
-        trackedItems.computeIfPresent(id, (key, current) -> new ExpiryEntry(current.itemRef(), current.expireAtMillis(), handle));
-    }
-
-    private void processScheduledExpiry(UUID id) {
+    private void processScheduledExpiry(UUID id, long expectedExpiry) {
         if (!enabled || id == null) return;
 
-        ExpiryEntry entry = trackedItems.remove(id);
-        if (entry == null) return;
+        ExpiryEntry entry = trackedItems.get(id);
+        if (entry == null || entry.expireAtMillis() != expectedExpiry) return;
 
         Item item = entry.getItem();
         if (item == null || !item.isValid() || item.isDead()) {
+            trackedItems.remove(id, entry);
             return;
         }
 
+        long stored = getStoredExpiry(item, entry.expireAtMillis());
+        if (stored > entry.expireAtMillis()) {
+            registerItemAt(item, stored);
+            return;
+        }
         long remaining = entry.expireAtMillis() - System.currentTimeMillis();
         if (remaining <= 0L) {
-
+            trackedItems.remove(id, entry);
+            if (isProtected(item)) return;
             try {
                 item.remove();
             } catch (Throwable ignored) {
             }
         } else {
-
-            scheduleExpiry(item, entry.expireAtMillis());
+            // The central sweep revisits the item without scheduling individual tasks.
         }
     }
 
@@ -384,7 +360,7 @@ public final class ItemExpiryModule implements Listener {
         }
     }
 
-    private record ExpiryEntry(WeakReference<Item> itemRef, long expireAtMillis, TaskHandle task) {
+    private record ExpiryEntry(WeakReference<Item> itemRef, long expireAtMillis) {
         Item getItem() {
             return itemRef != null ? itemRef.get() : null;
         }

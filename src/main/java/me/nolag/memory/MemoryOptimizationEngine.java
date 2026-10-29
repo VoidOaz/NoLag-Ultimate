@@ -35,7 +35,7 @@ public final class MemoryOptimizationEngine {
     public void start() {
         stop();
 
-        if (!enabled) {
+        if (!enabled || plugin.getSchedulerAdapter().isFolia()) {
             return;
         }
 
@@ -82,13 +82,14 @@ public final class MemoryOptimizationEngine {
         double usagePercent = maxBytes > 0L ? usedBytes * 100.0D / maxBytes : 0.0D;
 
         long gcCount = 0L;
+        long gcTimeMs = 0L;
 
         for (GarbageCollectorMXBean gc : GC_BEANS) {
             long count = gc.getCollectionCount();
 
-            if (count > 0L) {
-                gcCount += count;
-            }
+            if (count > 0L) gcCount += count;
+            long duration = gc.getCollectionTime();
+            if (duration > 0L) gcTimeMs += duration;
         }
 
         Pressure pressure;
@@ -101,11 +102,8 @@ public final class MemoryOptimizationEngine {
             pressure = Pressure.LOW;
         }
 
-        String activity = switch (pressure) {
-            case HIGH -> "high";
-            case MEDIUM -> "moderate";
-            case LOW -> "normal";
-        };
+        // Lifetime JVM GC counters; this is NOT heap-pressure-derived "activity".
+        String activity = gcCount + " collections / " + gcTimeMs + " ms cumulative pause";
 
         return new MemorySnapshot(
                 maxMb,

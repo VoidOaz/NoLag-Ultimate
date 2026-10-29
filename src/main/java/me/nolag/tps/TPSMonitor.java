@@ -9,7 +9,9 @@ import java.util.concurrent.atomic.AtomicLong;
 import me.nolag.NoLag;
 import me.nolag.platform.SchedulerAdapter.TaskHandle;
 import org.bukkit.Bukkit;
+import org.bukkit.ChatColor;
 import org.bukkit.World;
+import org.bukkit.entity.Player;
 
 public final class TPSMonitor {
 
@@ -25,6 +27,10 @@ public final class TPSMonitor {
     private long lastServerThreadCpuNanos = -1L;
     private long lastCpuSampleTimestamp = -1L;
     private long serverThreadId = -1L;
+    private long lastLowTpsWarningMillis;
+    private int consecutiveLowTpsSamples;
+    private static final long LOW_TPS_WARNING_COOLDOWN_MS = 60_000L;
+    private static final int LOW_TPS_WARNING_REQUIRED_SAMPLES = 2;
 
     public TPSMonitor(NoLag plugin) {
         this.plugin = plugin;
@@ -116,6 +122,55 @@ public final class TPSMonitor {
         } else {
             sampleServerThreadCpuMspt(now);
         }
+
+        checkLowTpsWarning(now);
+    }
+
+    private void checkLowTpsWarning(long now) {
+        double threshold = plugin.getConfig().getDouble("settings.tps-threshold", 16.0D);
+        if (!Double.isFinite(threshold)) {
+            threshold = 16.0D;
+        }
+        threshold = Math.max(1.0D, Math.min(20.0D, threshold));
+
+        if (currentTPS >= threshold) {
+            consecutiveLowTpsSamples = 0;
+            return;
+        }
+
+        consecutiveLowTpsSamples++;
+        if (consecutiveLowTpsSamples < LOW_TPS_WARNING_REQUIRED_SAMPLES
+                || now - lastLowTpsWarningMillis < LOW_TPS_WARNING_COOLDOWN_MS) {
+            return;
+        }
+
+        lastLowTpsWarningMillis = now;
+        String template = plugin.getConfig().getString(
+                "messages.low-tps-warning",
+                "&4&lWARNING! &cLow TPS detected (&e%tps%&c). Adaptive optimization is active..."
+        );
+        if (template == null || template.isBlank()) {
+            template = "&4&lWARNING! &cLow TPS detected (&e%tps%&c). Adaptive optimization is active...";
+        }
+        String tpsText = String.format(Locale.ROOT, "%.2f", currentTPS);
+        String message = ChatColor.translateAlternateColorCodes('&', template.replace("%tps%", tpsText));
+        plugin.getLogger().warning(ChatColor.stripColor(message));
+
+        for (Player player : Bukkit.getOnlinePlayers()) {
+            if (player == null) {
+                continue;
+            }
+            Runnable notifyPlayer = () -> {
+                if (player.isOnline() && (player.isOp() || player.hasPermission("nolag.admin"))) {
+                    player.sendMessage(message);
+                }
+            };
+            if (plugin.getSchedulerAdapter().isFolia()) {
+                plugin.getSchedulerAdapter().runEntity(player, notifyPlayer);
+            } else {
+                notifyPlayer.run();
+            }
+        }
     }
 
     private double sampleServerThreadCpuMspt(long now) {
@@ -159,29 +214,10 @@ public final class TPSMonitor {
         }
         lastLagSpikeLogTime = now;
 
-        World heaviestWorld = null;
-        int maxEntities = -1;
-
-        for (World world : Bukkit.getWorlds()) {
-            if (world == null) continue;
-            int entityCount = getEntityCountSafe(world);
-            if (entityCount > maxEntities) {
-                maxEntities = entityCount;
-                heaviestWorld = world;
-            }
-        }
-
-        if (heaviestWorld != null) {
-            int chunkCount = getLoadedChunkCount(heaviestWorld);
-            plugin.getLogger().warning(String.format(
-                    Locale.ROOT,
-                    "[NoLag] Lag Spike detected! Tick duration: %dms | World: %s (%d entities, %d loaded chunks)",
-                    durationMs,
-                    heaviestWorld.getName(),
-                    maxEntities,
-                    chunkCount
-            ));
-        }
+        // Never walk worlds, chunks or entity lists on the lagging tick.
+        plugin.getLogger().warning(String.format(Locale.ROOT,
+                "[NoLag] Lag spike: scheduler interval %dms (includes the expected tick interval). Use spark/JFR to inspect cause off the hot path.",
+                durationMs));
     }
 
 

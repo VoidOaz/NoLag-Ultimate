@@ -22,6 +22,7 @@ public final class PerformanceImpactAnalyzer {
     public static final String PHYSICS = "Physics";
     public static final String FLUID = "Fluid";
     public static final String TNT = "TNT";
+    public static final String NETWORK = "Network";
     public static final String CLEANUP = "Cleanup";
     public static final String CULLING = "Culling";
     public static final String MEMORY = "Memory";
@@ -36,6 +37,7 @@ public final class PerformanceImpactAnalyzer {
             PHYSICS,
             FLUID,
             TNT,
+            NETWORK,
             CULLING,
             CLEANUP,
             MEMORY,
@@ -126,9 +128,18 @@ public final class PerformanceImpactAnalyzer {
         return Collections.unmodifiableMap(result);
     }
 
+    private volatile long lastFlushNano = System.nanoTime();
+
     public void flushWindow() {
+        long now = System.nanoTime();
+        long last = lastFlushNano;
+        lastFlushNano = now;
+        double elapsedSeconds = Math.max(0.05D, (now - last) / 1_000_000_000.0D);
+        // Approximate ticks in the elapsed sample window, NOT server MSPT.
+        double tps = plugin.getTPSMonitor() == null ? 20.0D : plugin.getTPSMonitor().getTPS();
+        double ticks = Math.max(1.0D, elapsedSeconds * Math.max(1.0D, Math.min(20.0D, tps)));
         for (CategoryStats stats : categoryStats.values()) {
-            stats.rollWindow();
+            stats.rollWindow(ticks, elapsedSeconds);
         }
     }
 
@@ -139,7 +150,7 @@ public final class PerformanceImpactAnalyzer {
 
 
         String canonical = switch (categoryKey) {
-            case CHUNK, CHUNK_GENERATION, HOPPER, ENTITIES, REDSTONE, PHYSICS, FLUID, TNT, CLEANUP, CULLING, MEMORY, OTHER -> categoryKey;
+            case CHUNK, CHUNK_GENERATION, HOPPER, ENTITIES, REDSTONE, PHYSICS, FLUID, TNT, NETWORK, CLEANUP, CULLING, MEMORY, OTHER -> categoryKey;
             default -> null;
         };
         if (canonical != null) return canonical;
@@ -155,6 +166,7 @@ public final class PerformanceImpactAnalyzer {
             case "physics" -> PHYSICS;
             case "fluid" -> FLUID;
             case "tnt" -> TNT;
+            case "network", "netty", "packet" -> NETWORK;
             case "cleanup" -> CLEANUP;
             case "culling", "entityculling", "entity-culling" -> CULLING;
             case "memory", "ram", "ramfixer" -> MEMORY;
@@ -201,6 +213,7 @@ public final class PerformanceImpactAnalyzer {
 
         private volatile double smoothedMspt;
         private volatile long lastWindowCalls;
+        private volatile double lastWindowSeconds = 1.0D;
 
         CategoryStats(String categoryName) {
             this.categoryName = categoryName;
@@ -214,13 +227,14 @@ public final class PerformanceImpactAnalyzer {
             windowCalls.add(calls);
         }
 
-        void rollWindow() {
+        void rollWindow(double ticks, double elapsedSeconds) {
             long nanos = windowNanos.sumThenReset();
             long calls = windowCalls.sumThenReset();
 
             lastWindowCalls = calls;
+            lastWindowSeconds = elapsedSeconds;
 
-            double currentMspt = (nanos / 1_000_000.0D) / 20.0D;
+            double currentMspt = (nanos / 1_000_000.0D) / ticks;
 
             if (smoothedMspt == 0.0D) {
                 smoothedMspt = currentMspt;
@@ -239,7 +253,7 @@ public final class PerformanceImpactAnalyzer {
                     100.0D,
                     Math.max(
                             0.0D,
-                            lastWindowCalls / 50.0D
+                            100.0D * lastWindowCalls / Math.max(1.0D, lastWindowSeconds * 50.0D)
                     )
             );
 

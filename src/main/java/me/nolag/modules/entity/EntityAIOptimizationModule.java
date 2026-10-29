@@ -22,8 +22,7 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.entity.EntityDeathEvent;
-import org.bukkit.event.entity.EntitySpawnEvent;
-import org.bukkit.event.player.PlayerQuitEvent;
+import org.bukkit.event.world.ChunkLoadEvent;
 import org.bukkit.persistence.PersistentDataType;
 
 import java.util.List;
@@ -41,7 +40,7 @@ public final class EntityAIOptimizationModule implements Listener {
     private final Set<UUID> aiDisabledEntities = ConcurrentHashMap.newKeySet();
 
     private TaskHandle aiTask;
-    private volatile boolean enabled = true;
+    private volatile boolean enabled = false;
     private volatile double activationRange = 48.0;
     private volatile double rangeSq = 48.0 * 48.0;
     private volatile int entitiesPerRun = DEFAULT_ENTITIES_PER_RUN;
@@ -59,7 +58,7 @@ public final class EntityAIOptimizationModule implements Listener {
 
     public void reload() {
         var cfg = plugin.getConfig();
-        this.enabled = cfg.getBoolean("optimization.activation-range.enabled", true);
+        this.enabled = cfg.getBoolean("optimization.activation-range.enabled", false);
         this.activationRange = Math.max(8.0, cfg.getDouble("optimization.activation-range.range", 48.0));
         this.rangeSq = activationRange * activationRange;
         this.entitiesPerRun = Math.max(50, cfg.getInt("optimization.activation-range.entities-per-run", DEFAULT_ENTITIES_PER_RUN));
@@ -74,7 +73,10 @@ public final class EntityAIOptimizationModule implements Listener {
         worldCursor = 0;
         chunkCursor = 0;
 
-        if (!enabled || plugin.getSchedulerAdapter().isFolia()) return;
+        if (!enabled || plugin.getSchedulerAdapter().isFolia()) {
+            restoreDisabledEntities();
+            return;
+        }
 
         aiTask = plugin.getSchedulerAdapter().runGlobalTimer(this::optimizeEntityAI, 200L, 200L);
     }
@@ -85,7 +87,6 @@ public final class EntityAIOptimizationModule implements Listener {
             aiTask = null;
         }
         restoreDisabledEntities();
-        aiDisabledEntities.clear();
     }
 
     private boolean isProtected(LivingEntity le) {
@@ -103,10 +104,7 @@ public final class EntityAIOptimizationModule implements Listener {
         if (!enabled || plugin.getSchedulerAdapter().isFolia()) return;
 
         double tps = plugin.getTPSMonitor().getTPS();
-        if (tps >= 18.0D) {
-            restoreDisabledEntities();
-            return;
-        }
+        boolean restoreOnly = !enabled || tps >= 18.0D;
 
         List<World> worlds = Bukkit.getWorlds();
         if (worlds.isEmpty()) return;
@@ -116,8 +114,9 @@ public final class EntityAIOptimizationModule implements Listener {
         }
 
         int processed = 0;
+        int chunksVisited = 0;
         int worldsVisited = 0;
-        while (processed < entitiesPerRun && worldsVisited < worlds.size()) {
+        while (processed < entitiesPerRun && chunksVisited < 32 && worldsVisited < worlds.size()) {
             if (worldCursor >= worlds.size()) {
                 worldCursor = 0;
                 chunkCursor = 0;
@@ -141,8 +140,14 @@ public final class EntityAIOptimizationModule implements Listener {
                 continue;
             }
 
-            List<Player> players = world.getPlayers();
+            // P-07: Snapshot player locations once per chunk instead of 3 API
+            // calls for each mob/player pair.
+            java.util.List<org.bukkit.Location> playerLocations = new java.util.ArrayList<>();
+            for (Player player : world.getPlayers()) {
+                if (player != null && player.isOnline()) playerLocations.add(player.getLocation());
+            }
             Chunk chunk = chunks[chunkCursor++];
+            chunksVisited++;
             if (chunk == null || !chunk.isLoaded()) continue;
 
             Entity[] entities;
@@ -155,6 +160,11 @@ public final class EntityAIOptimizationModule implements Listener {
             for (Entity entity : entities) {
                 if (processed >= entitiesPerRun) return;
                 if (!(entity instanceof LivingEntity le)) continue;
+                if (le.getPersistentDataContainer().has(aiDisabledKey, PersistentDataType.BYTE)) {
+                    aiDisabledEntities.add(le.getUniqueId());
+                    if (restoreOnly || isProtected(le)) restoreEntityAI(le);
+                }
+                if (restoreOnly) continue;
                 if (isProtected(le)) continue;
                 processed++;
 
@@ -164,11 +174,10 @@ public final class EntityAIOptimizationModule implements Listener {
                 double ez = eloc.getZ();
                 boolean playerNear = false;
 
-                for (Player player : players) {
-                    if (player == null || !player.isOnline()) continue;
-                    double px = player.getLocation().getX();
-                    double py = player.getLocation().getY();
-                    double pz = player.getLocation().getZ();
+                for (org.bukkit.Location playerLocation : playerLocations) {
+                    double px = playerLocation.getX();
+                    double py = playerLocation.getY();
+                    double pz = playerLocation.getZ();
                     double dx = px - ex;
                     double dy = py - ey;
                     double dz = pz - ez;
@@ -206,23 +215,40 @@ public final class EntityAIOptimizationModule implements Listener {
 
     private void restoreEntityAI(LivingEntity entity) {
         UUID id = entity.getUniqueId();
-        if (!aiDisabledEntities.remove(id)
-                && !entity.getPersistentDataContainer().has(aiDisabledKey, PersistentDataType.BYTE)) {
-            return;
-        }
-
-        plugin.getSchedulerAdapter().runEntity(entity, () -> {
-            try {
-                if (entity.isValid()) entity.setAI(true);
-                entity.getPersistentDataContainer().remove(aiDisabledKey);
-            } catch (Throwable ignored) {
+        if (!aiDisabledEntities.contains(id)
+                && !entity.getPersistentDataContainer().has(aiDisabledKey, PersistentDataType.BYTE)) return;
+        // This module is inactive on Folia. Paper callers are already on the main thread;
+        // postponing this work can leave mobs without AI when the plugin shuts down.
+        try {
+            if (entity.isValid() && !entity.hasAI()
+                    && entity.getPersistentDataContainer().has(aiDisabledKey, PersistentDataType.BYTE)) {
+                entity.setAI(true);
             }
-        });
+            entity.getPersistentDataContainer().remove(aiDisabledKey);
+            aiDisabledEntities.remove(id);
+        } catch (Throwable failure) {
+            plugin.getLogger().warning("Could not restore AI for " + id + ": " + failure.getMessage());
+        }
     }
 
     private void restoreDisabledEntities() {
-        if (aiDisabledEntities.isEmpty() || plugin.getSchedulerAdapter().isFolia()) return;
+        if (plugin.getSchedulerAdapter().isFolia()) return;
 
+        // Include markers left by a cancelled disable task or an earlier plugin run.
+        for (World world : Bukkit.getWorlds()) {
+            for (Chunk chunk : world.getLoadedChunks()) {
+                try {
+                    for (Entity entity : chunk.getEntities()) {
+                        if (entity instanceof LivingEntity living && living.isValid() && !living.isDead()
+                                && living.getPersistentDataContainer().has(aiDisabledKey, PersistentDataType.BYTE)) {
+                            restoreEntityAI(living);
+                        }
+                    }
+                } catch (RuntimeException failure) {
+                    plugin.getLogger().warning("Could not inspect chunk for AI restoration: " + failure.getMessage());
+                }
+            }
+        }
         for (UUID id : new java.util.ArrayList<>(aiDisabledEntities)) {
             Entity entity = Bukkit.getEntity(id);
             if (entity instanceof LivingEntity living && living.isValid() && !living.isDead()) {
@@ -233,14 +259,14 @@ public final class EntityAIOptimizationModule implements Listener {
         }
     }
 
-    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
-    public void onEmergencySpawnCheck(EntitySpawnEvent event) {
-        if (!enabled) return;
-        if (plugin.getTPSMonitor().getMSPT() <= emergencyMSPT) return;
-
-        Entity entity = event.getEntity();
-        if (entity instanceof LivingEntity le && !(entity instanceof Player) && !isProtected(le)) {
-            event.setCancelled(true);
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onChunkLoad(ChunkLoadEvent event) {
+        for (Entity entity : event.getChunk().getEntities()) {
+            if (entity instanceof LivingEntity living
+                    && living.getPersistentDataContainer().has(aiDisabledKey, PersistentDataType.BYTE)
+                    && (!enabled || plugin.getSchedulerAdapter().isFolia() || plugin.getTPSMonitor().getTPS() >= 18.0D)) {
+                restoreEntityAI(living);
+            }
         }
     }
 
@@ -249,8 +275,4 @@ public final class EntityAIOptimizationModule implements Listener {
         aiDisabledEntities.remove(event.getEntity().getUniqueId());
     }
 
-    @EventHandler(priority = EventPriority.MONITOR)
-    public void onPlayerQuit(PlayerQuitEvent event) {
-
-    }
 }

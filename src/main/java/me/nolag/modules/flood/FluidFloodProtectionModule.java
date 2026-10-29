@@ -270,8 +270,13 @@ public final class FluidFloodProtectionModule implements Listener {
         event.setCancelled(true);
         state.addEmergency(dispenser.getX() >> 4, dispenser.getZ() >> 4,
                 cfg.emergencyChunkRadius, now + cfg.emergencyThrottleNanos);
-        breakMachineCore(dispenser, cfg.machineComponentRadius, cfg.machineComponentLimit);
-        clearRecentFluid(state, dispenser, cfg.machineClearRadius);
+        // B-01: respect flags. Destructive actions are always suppressed regardless of these legacy toggles.
+        if (cfg.breakMachineComponents) {
+            breakMachineCore(dispenser, cfg.machineComponentRadius, cfg.machineComponentLimit);
+        }
+        if (cfg.neutralizeFluid) {
+            clearRecentFluid(state, dispenser, cfg.machineClearRadius);
+        }
         tracker.lastTriggeredNanos = now;
 
         if (cfg.logViolations) {
@@ -419,10 +424,10 @@ public final class FluidFloodProtectionModule implements Listener {
             clearRecentIce(state, center, cfg.machineClearRadius);
         }
 
-        sendMessageByTrack(machine, cfg, "machine-neutralized", "&cA suspicious fluid machine was neutralized.");
+        sendMessageByTrack(machine, cfg, "machine-neutralized", "&cSuspicious fluid activity was temporarily restricted.");
 
         if (cfg.logViolations) {
-            plugin.getLogger().warning("[FloodProtection] Neutralized " + reason
+            plugin.getLogger().warning("[FloodProtection] Suppressed " + reason
                     + " | world=" + world.getName()
                     + " | x=" + center.getX()
                     + " y=" + center.getY()
@@ -431,149 +436,16 @@ public final class FluidFloodProtectionModule implements Listener {
         }
     }
 
-    private void clearRecentFluid(WorldState state, Block center, int radius) {
-        int r = Math.max(1, radius);
-        World world = center.getWorld();
-        if (world == null) {
-            return;
-        }
+    // K-02: Threat signals are insufficient to authorize destructive world edits.
+    // Bukkit/Paper block destroy events are NOT an authorization or claim API:
+    // some protection plugins do not implement them, and fake events do not
+    // supply a player/owner. The only safe default is to cancel future activity
+    // temporarily. These methods intentionally do not alter existing blocks.
+    private void clearRecentFluid(WorldState state, Block center, int radius) { }
 
-        int centerChunkX = center.getX() >> 4;
-        int centerChunkZ = center.getZ() >> 4;
-        state.flowCells.forEachCell(cell -> {
-            int cellX = (int) (cell.chunkKey >> 32);
-            int cellZ = (int) cell.chunkKey;
-            if (Math.abs(cellX - centerChunkX) > 1 || Math.abs(cellZ - centerChunkZ) > 1) {
-                return;
-            }
-            cell.recentTargetsForEach(packed -> {
-                int x = unpackX(packed);
-                int y = unpackY(packed);
-                int z = unpackZ(packed);
-                if (Math.abs(x - center.getX()) > r
-                        || Math.abs(y - center.getY()) > r
-                        || Math.abs(z - center.getZ()) > r) {
-                    return;
-                }
-                if (!world.isChunkLoaded(x >> 4, z >> 4)) {
-                    return;
-                }
-                Block block = world.getBlockAt(x, y, z);
-                if (FLUIDS.contains(block.getType())) {
-                    block.setType(Material.AIR, false);
-                }
-            });
-        });
+    private void clearRecentIce(WorldState state, Block center, int radius) { }
 
-        for (int x = center.getX() - 1; x <= center.getX() + 1; x++) {
-            for (int y = center.getY() - 1; y <= center.getY() + 1; y++) {
-                for (int z = center.getZ() - 1; z <= center.getZ() + 1; z++) {
-                    if (!world.isChunkLoaded(x >> 4, z >> 4)) {
-                        continue;
-                    }
-                    Block block = world.getBlockAt(x, y, z);
-                    if (FLUIDS.contains(block.getType())) {
-                        block.setType(Material.AIR, false);
-                    }
-                }
-            }
-        }
-    }
-
-    private void clearRecentIce(WorldState state, Block center, int radius) {
-        World world = center.getWorld();
-        if (world == null) {
-            return;
-        }
-        int r = Math.max(1, radius);
-        int centerChunkX = center.getX() >> 4;
-        int centerChunkZ = center.getZ() >> 4;
-        state.flowCells.forEachCell(cell -> {
-            int cellX = (int) (cell.chunkKey >> 32);
-            int cellZ = (int) cell.chunkKey;
-            if (Math.abs(cellX - centerChunkX) > 1 || Math.abs(cellZ - centerChunkZ) > 1) {
-                return;
-            }
-            cell.recentSourcesForEach(packed -> {
-                int x = unpackX(packed);
-                int y = unpackY(packed);
-                int z = unpackZ(packed);
-                if (Math.abs(x - center.getX()) > r
-                        || Math.abs(y - center.getY()) > r
-                        || Math.abs(z - center.getZ()) > r) {
-                    return;
-                }
-                if (!world.isChunkLoaded(x >> 4, z >> 4)) {
-                    return;
-                }
-                Block block = world.getBlockAt(x, y, z);
-                if (ICE_MATERIALS.contains(block.getType())) {
-                    block.setType(Material.AIR, false);
-                }
-            });
-        });
-    }
-
-
-    private int breakMachineCore(Block center, int radius, int limit) {
-        if (radius <= 0 || limit <= 0) {
-            return 0;
-        }
-
-        World world = center.getWorld();
-        if (world == null) {
-            return 0;
-        }
-
-        int broken = 0;
-        List<BlockCandidate> candidates = new ArrayList<>(24);
-        int minY = Math.max(world.getMinHeight(), center.getY() - radius);
-        int maxY = Math.min(world.getMaxHeight() - 1, center.getY() + radius);
-
-        for (int x = center.getX() - radius; x <= center.getX() + radius; x++) {
-            for (int y = minY; y <= maxY; y++) {
-                for (int z = center.getZ() - radius; z <= center.getZ() + radius; z++) {
-                    if (!world.isChunkLoaded(x >> 4, z >> 4)) {
-                        continue;
-                    }
-                    Block block = world.getBlockAt(x, y, z);
-                    Material type = block.getType();
-                    if (!CORE_COMPONENTS.contains(type)) {
-                        continue;
-                    }
-                    int priority = componentPriority(type);
-                    int dx = x - center.getX();
-                    int dy = y - center.getY();
-                    int dz = z - center.getZ();
-                    double distanceSq = (double) dx * dx + (double) dy * dy + (double) dz * dz;
-                    candidates.add(new BlockCandidate(block, priority, distanceSq));
-                }
-            }
-        }
-
-        candidates.sort((a, b) -> {
-            int priority = Integer.compare(b.priority, a.priority);
-            if (priority != 0) {
-                return priority;
-            }
-            return Double.compare(a.distanceSquared, b.distanceSquared);
-        });
-
-        for (BlockCandidate candidate : candidates) {
-            if (broken >= limit) {
-                break;
-            }
-            Block block = candidate.block;
-            if (!world.isChunkLoaded(block.getX() >> 4, block.getZ() >> 4)) {
-                continue;
-            }
-            if (CORE_COMPONENTS.contains(block.getType())) {
-                block.setType(Material.AIR, false);
-                broken++;
-            }
-        }
-        return broken;
-    }
+    private int breakMachineCore(Block center, int radius, int limit) { return 0; }
 
     private MachineSignature quickInspectMachine(Block piston, List<Block> movedBlocks) {
         boolean sticky = piston.getType() == Material.STICKY_PISTON;

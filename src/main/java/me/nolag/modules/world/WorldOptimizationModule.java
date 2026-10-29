@@ -30,6 +30,8 @@ public final class WorldOptimizationModule implements Listener {
 
 
     private final Map<UUID, Long> lastVoidRescueTime = new ConcurrentHashMap<>();
+    private final java.util.Set<LeafScanKey> pendingLeafScans = ConcurrentHashMap.newKeySet();
+    private record LeafScanKey(UUID world, int chunkX, int chunkZ, int bx, int by, int bz) { }
 
     private final NoLag plugin;
     private volatile boolean fastLeafDecayEnabled = true;
@@ -42,7 +44,12 @@ public final class WorldOptimizationModule implements Listener {
 
     public void reload() {
         var config = plugin.getConfig();
-        fastLeafDecayEnabled = config.getBoolean("features.fast-leaf-decay", true);
+        // Delayed block breaks cannot reliably consult every region/claim plugin.
+        // Until there is a compatible permission integration, let vanilla decay leaves.
+        fastLeafDecayEnabled = false;
+        if (config.getBoolean("features.fast-leaf-decay", false)) {
+            plugin.getLogger().warning("Fast leaf decay is unavailable without claim-aware permission checks; using vanilla decay.");
+        }
         voidTeleportEnabled = config.getBoolean("features.void-teleport", true);
     }
 
@@ -91,8 +98,19 @@ public final class WorldOptimizationModule implements Listener {
                         (scanChunkZ << 4) + 8.0
                 );
 
-                plugin.getSchedulerAdapter().runRegionLater(regionLocation, () ->
-                        decayLeavesInChunk(world, blockX, blockY, blockZ, scanChunkX, scanChunkZ), 6L);
+                LeafScanKey key = new LeafScanKey(world.getUID(), scanChunkX, scanChunkZ,
+                        blockX >> 3, blockY >> 3, blockZ >> 3);
+                if (!pendingLeafScans.add(key)) continue;
+                var task = plugin.getSchedulerAdapter().runRegionLater(regionLocation, () -> {
+                    try {
+                        if (fastLeafDecayEnabled) {
+                            decayLeavesInChunk(world, blockX, blockY, blockZ, scanChunkX, scanChunkZ);
+                        }
+                    } finally {
+                        pendingLeafScans.remove(key);
+                    }
+                }, 6L);
+                if (task == null || task.isCancelled()) pendingLeafScans.remove(key);
             }
         }
     }
@@ -140,7 +158,8 @@ public final class WorldOptimizationModule implements Listener {
                     if (!leaves.isPersistent() && leaves.getDistance() >= 7) {
 
 
-                        block.setType(Material.AIR, false);
+                        // Let vanilla calculate natural leaf loot and drop items.
+                        block.breakNaturally();
                     }
                 }
             }

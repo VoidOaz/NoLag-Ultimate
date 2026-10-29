@@ -20,6 +20,7 @@ import me.nolag.modules.hopper.HopperOptimizationModule;
 import me.nolag.modules.item.ItemExpiryModule;
 import me.nolag.modules.item.ItemStackerModule;
 import me.nolag.modules.mobstacker.MobStackerModule;
+import me.nolag.modules.netty.NettyProtectionModule;
 import me.nolag.modules.physics.PhysicsOptimizationModule;
 import me.nolag.modules.redstone.RedstoneLagDetectorModule;
 import me.nolag.modules.plugins.PluginLagWatcherModule;
@@ -63,6 +64,7 @@ public final class NoLag extends JavaPlugin {
     private RedstoneLagDetectorModule redstoneLagDetectorModule;
     private PluginLagWatcherModule pluginWatcherModule;
     private AutosaveOptimizerModule autosaveOptimizerModule;
+    private NettyProtectionModule nettyProtectionModule;
     private Metrics metrics;
 
     @Override
@@ -82,8 +84,8 @@ public final class NoLag extends JavaPlugin {
             return;
         }
         if (this.schedulerAdapter.isFolia()) {
-            getLogger().info("Folia scheduler bridge is active. Entity-sensitive writes use entity schedulers; mob stacking uses region-owned chunk scans.");
-            getLogger().info("Folia item stacking is limited to a capped scan of the item's current chunk to avoid cross-region queries.");
+            getLogger().info("Folia scheduler bridge is active. Entity-sensitive writes use entity schedulers. New virtual mob merges are disabled for data safety.");
+            getLogger().info("Folia item stacking is disabled because cross-region item access cannot be guaranteed safe.");
             getLogger().warning("Folia-safe profile: full-world entity/cleanup sweeps, entity culling, deep RamFixer scans, fluid-flood correlation, Nether traversal protection and staggered autosave remain disabled where their state is not region-partitioned.");
         }
 
@@ -93,13 +95,13 @@ public final class NoLag extends JavaPlugin {
             getLogger().warning("=========================================================");
             getLogger().warning(" [NoLag-Ultimate] UNTESTED MINECRAFT VERSION DETECTED!");
             getLogger().warning(" Detected Version: " + versionChecker.getServerVersionString());
-            getLogger().warning(" Running in maximum compatibility mode.");
+            getLogger().warning(" Server/API compatibility is not verified; test in staging before production.");
             getLogger().warning("=========================================================");
         }
 
 
         saveDefaultConfig();
-
+        migrateLegacyChunkSettings();
 
         this.tpsMonitor = new TPSMonitor(this);
         this.performanceAnalyzer = new PerformanceImpactAnalyzer(this);
@@ -125,6 +127,7 @@ public final class NoLag extends JavaPlugin {
         this.redstoneLagDetectorModule = new RedstoneLagDetectorModule(this, this.schedulerAdapter);
         this.pluginWatcherModule = new PluginLagWatcherModule(this);
         this.autosaveOptimizerModule = new AutosaveOptimizerModule(this);
+        this.nettyProtectionModule = new NettyProtectionModule(this);
 
 
         var pm = getServer().getPluginManager();
@@ -146,6 +149,7 @@ public final class NoLag extends JavaPlugin {
         pm.registerEvents(fluidFloodModule, this);
         pm.registerEvents(redstoneLagDetectorModule, this);
         pm.registerEvents(autosaveOptimizerModule, this);
+        pm.registerEvents(nettyProtectionModule, this);
 
 
         this.itemExpiryModule.start();
@@ -189,6 +193,44 @@ public final class NoLag extends JavaPlugin {
         getLogger().info(" Running on MC " + versionChecker.getServerVersionString() + " (" + PlatformDetector.getPlatformName(detectedPlatform) + " Optimized)");
         getLogger().info(" Core optimization layers are active; platform-specific features use safe fallbacks.");
         getLogger().info("=========================================================");
+    }
+
+    /**
+     * Removes obsolete custom chunk-unload and distance-controller options from older configs.
+     * The adaptive native chunk engine has one supported user-facing switch.
+     */
+    private void migrateLegacyChunkSettings() {
+        var config = getConfig();
+        boolean legacyChunkConfig = config.contains("chunk-optimizer.min-chunks")
+                || config.contains("chunk-optimizer.max-chunks")
+                || config.contains("chunk-optimizer.async-chunk-prioritization")
+                || config.contains("optimization.chunk-cleaner")
+                || config.contains("settings.view-distance");
+        if (!legacyChunkConfig) {
+            return;
+        }
+
+        // Preserve an administrator's explicit off switch during migration.
+        if (!config.isSet("chunk-optimizer.enabled")) {
+            config.set("chunk-optimizer.enabled", true);
+        }
+        config.set("chunk-optimizer.min-chunks", null);
+        config.set("chunk-optimizer.max-chunks", null);
+        config.set("chunk-optimizer.direction-bias-enabled", null);
+        config.set("chunk-optimizer.speed-reduction", null);
+        config.set("chunk-optimizer.fast-travel-threshold", null);
+        config.set("chunk-optimizer.max-step-per-cycle", null);
+        config.set("chunk-optimizer.hysteresis-chunks", null);
+        config.set("chunk-optimizer.rate-limit-enabled", null);
+        config.set("chunk-optimizer.min-step-cycles", null);
+        config.set("chunk-optimizer.async-chunk-prioritization", null);
+        config.set("chunk-optimizer.bias-interval-ticks", null);
+        config.set("chunk-optimizer.manage-simulation-distance", null);
+        config.set("settings.view-distance", null);
+        config.set("optimization.chunk-cleaner", null);
+        config.set("features.dynamic-view-distance", null);
+        saveConfig();
+        getLogger().info("Migrated legacy chunk settings; preserved the configured chunk-optimizer.enabled value.");
     }
 
     @Override
@@ -238,6 +280,9 @@ public final class NoLag extends JavaPlugin {
         if (autosaveOptimizerModule != null) {
             autosaveOptimizerModule.stop();
         }
+        if (nettyProtectionModule != null) {
+            nettyProtectionModule.stop();
+        }
 
         if (schedulerAdapter != null) {
             schedulerAdapter.cancelAll();
@@ -260,6 +305,7 @@ public final class NoLag extends JavaPlugin {
             performanceAnalyzer.start();
         }
         if (memoryOptimizationEngine != null) {
+            memoryOptimizationEngine.reload();
             memoryOptimizationEngine.start();
         }
         if (ramFixerModule != null) {
@@ -322,6 +368,9 @@ public final class NoLag extends JavaPlugin {
         if (autosaveOptimizerModule != null) {
             autosaveOptimizerModule.reload();
             autosaveOptimizerModule.start();
+        }
+        if (nettyProtectionModule != null) {
+            nettyProtectionModule.reload();
         }
     }
 
@@ -444,6 +493,10 @@ public final class NoLag extends JavaPlugin {
 
     public AutosaveOptimizerModule getAutosaveOptimizerModule() {
         return autosaveOptimizerModule;
+    }
+
+    public NettyProtectionModule getNettyProtectionModule() {
+        return nettyProtectionModule;
     }
 
     public Metrics getMetrics() {

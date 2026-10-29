@@ -11,15 +11,15 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import me.nolag.NoLag;
 import me.nolag.platform.SchedulerAdapter.TaskHandle;
-import org.bukkit.Bukkit;
-import org.bukkit.ChatColor;
-import org.bukkit.Chunk;
-import org.bukkit.Location;
-import org.bukkit.NamespacedKey;
-import org.bukkit.World;
+import org.bukkit.*;
 import org.bukkit.entity.Ageable;
 import org.bukkit.entity.ArmorStand;
 import org.bukkit.entity.Boss;
+import org.bukkit.entity.Creeper;
+import org.bukkit.entity.Pig;
+import org.bukkit.entity.Strider;
+import org.bukkit.entity.Wolf;
+import org.bukkit.entity.Zombie;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.EntityType;
 import org.bukkit.entity.LivingEntity;
@@ -57,6 +57,8 @@ public final class MobStackerModule implements Listener {
     private final NoLag plugin;
     private final NamespacedKey stackKey;
     private final NamespacedKey noStackKey;
+    private final NamespacedKey originalNameKey;
+    private final NamespacedKey originalNameVisibleKey;
 
     private TaskHandle triggerTask;
     private TaskHandle scanTask;
@@ -65,7 +67,8 @@ public final class MobStackerModule implements Listener {
     private final Map<ChunkKey, Long> pendingFoliaChunkScans = new ConcurrentHashMap<>();
     private final AtomicLong foliaScanGeneration = new AtomicLong();
 
-    private volatile boolean enabled = true;
+    private volatile boolean enabled = false;
+    private volatile boolean unsafeVirtualMerging = false;
     private volatile int maxStackSize = 50;
     private volatile int minMobsToStack = 8;
     private volatile double stackRadius = 5.0;
@@ -78,13 +81,21 @@ public final class MobStackerModule implements Listener {
         this.plugin = plugin;
         this.stackKey = new NamespacedKey(plugin, "stack_amount");
         this.noStackKey = new NamespacedKey(plugin, "no_stack_temp");
+        this.originalNameKey = new NamespacedKey(plugin, "original_mob_name");
+        this.originalNameVisibleKey = new NamespacedKey(plugin, "original_mob_name_visible");
         reload();
         startTask();
     }
 
     public void reload() {
         var cfg = plugin.getConfig();
-        this.enabled = cfg.getBoolean("features.mob-stacker.enabled", true);
+        this.enabled = cfg.getBoolean("features.mob-stacker.enabled", false);
+        // No reliable per-mob serialization/restore contract exists for virtual stacks.
+        // Existing stacks still unwind; merging is disabled even when enabled=true.
+        this.unsafeVirtualMerging = false;
+        if (enabled) {
+            plugin.getLogger().warning("[MobStacker] New virtual merges disabled: unique mob state, drops and third-party data cannot be restored losslessly. Existing virtual stacks still unwind.");
+        }
         this.maxStackSize = Math.max(2, cfg.getInt("features.mob-stacker.max-stack-size", 50));
         this.minMobsToStack = Math.max(2, cfg.getInt("features.mob-stacker.min-mobs-to-stack", 8));
         this.stackRadius = Math.max(1.0, cfg.getDouble("features.mob-stacker.radius", 5.0));
@@ -105,7 +116,7 @@ public final class MobStackerModule implements Listener {
 
     public void startTask() {
         stop();
-        if (!enabled) return;
+        if (!enabled || !unsafeVirtualMerging) return;
         if (plugin.getSchedulerAdapter().isFolia()) {
 
 
@@ -171,7 +182,76 @@ public final class MobStackerModule implements Listener {
         return le.getCustomName() == null || hasStackData(le);
     }
 
+    // B-04 fix: Extended compatibility contract to preserve distinct mob traits and drops
+    public boolean isCompatible(LivingEntity a, LivingEntity b) {
+        if (a == null || b == null || !a.isValid() || !b.isValid() || a.isDead() || b.isDead()) {
+            return false;
+        }
+        if (a.getType() != b.getType()) {
+            return false;
+        }
+        if (!isEligible(a) || !isEligible(b)) {
+            return false;
+        }
+
+        // Equipment check: preserve custom/dropped gear
+        org.bukkit.inventory.EntityEquipment eqA = a.getEquipment();
+        org.bukkit.inventory.EntityEquipment eqB = b.getEquipment();
+        if (hasAnyEquipment(eqA) || hasAnyEquipment(eqB)) {
+            return false;
+        }
+
+        // Health difference check
+        if (Math.abs(a.getHealth() - b.getHealth()) > 0.5D) {
+            return false;
+        }
+
+        // Potion effects check
+        if (!a.getActivePotionEffects().isEmpty() || !b.getActivePotionEffects().isEmpty()) {
+            return false;
+        }
+
+        // Specific mob traits and variants
+        if (a instanceof Ageable ageA && b instanceof Ageable ageB && ageA.isAdult() != ageB.isAdult()) {
+            return false;
+        }
+        if (a instanceof Sheep sA && b instanceof Sheep sB && sA.getColor() != sB.getColor()) {
+            return false;
+        }
+        if (a instanceof Slime slA && b instanceof Slime slB && slA.getSize() != slB.getSize()) {
+            return false;
+        }
+        if (a instanceof Creeper cA && b instanceof Creeper cB && cA.isPowered() != cB.isPowered()) {
+            return false;
+        }
+        if (a instanceof Zombie zA && b instanceof Zombie zB && zA.isBaby() != zB.isBaby()) {
+            return false;
+        }
+        if (a instanceof Pig pA && b instanceof Pig pB && pA.hasSaddle() != pB.hasSaddle()) {
+            return false;
+        }
+        if (a instanceof Strider stA && b instanceof Strider stB && stA.hasSaddle() != stB.hasSaddle()) {
+            return false;
+        }
+        if (a instanceof Wolf wA && b instanceof Wolf wB && (wA.isAngry() != wB.isAngry() || wA.getCollarColor() != wB.getCollarColor())) {
+            return false;
+        }
+
+        return true;
+    }
+
+    private boolean hasAnyEquipment(org.bukkit.inventory.EntityEquipment eq) {
+        if (eq == null) return false;
+        return (eq.getItemInMainHand() != null && eq.getItemInMainHand().getType() != Material.AIR)
+                || (eq.getItemInOffHand() != null && eq.getItemInOffHand().getType() != Material.AIR)
+                || (eq.getHelmet() != null && eq.getHelmet().getType() != Material.AIR)
+                || (eq.getChestplate() != null && eq.getChestplate().getType() != Material.AIR)
+                || (eq.getLeggings() != null && eq.getLeggings().getType() != Material.AIR)
+                || (eq.getBoots() != null && eq.getBoots().getType() != Material.AIR);
+    }
+
     public void performStacking(Chunk chunk) {
+        if (!unsafeVirtualMerging) return;
         if (chunk == null || !chunk.isLoaded() || !chunk.isEntitiesLoaded()) return;
 
         Entity[] entities = chunk.getEntities();
@@ -192,7 +272,6 @@ public final class MobStackerModule implements Listener {
                 continue;
             }
 
-
             Location representativeLocation = rep.getLocation();
             Location entityLocation = le.getLocation();
             double dx = representativeLocation.getX() - entityLocation.getX();
@@ -200,6 +279,8 @@ public final class MobStackerModule implements Listener {
             double dz = representativeLocation.getZ() - entityLocation.getZ();
 
             if ((dx * dx + dy * dy + dz * dz) > stackRadiusSq) continue;
+            // B-04 fix: use comprehensive isCompatible check
+            if (!isCompatible(rep, le)) continue;
 
             int currentCount = countMap.getOrDefault(type, 1);
             if (currentCount >= maxStackSize) continue;
@@ -230,30 +311,35 @@ public final class MobStackerModule implements Listener {
         scheduleFoliaChunkStack(event.getChunk());
     }
 
-    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onEntitySpawn(EntitySpawnEvent event) {
-        if (!enabled) return;
+        if (!enabled || !unsafeVirtualMerging) return;
 
         Entity spawned = event.getEntity();
-        if (!isEligible(spawned)) return;
+        if (!(spawned instanceof LivingEntity le) || !isEligible(spawned)) return;
+
         if (plugin.getSchedulerAdapter().isFolia()) {
-
-
             scheduleFoliaChunkStack(spawned.getChunk());
             return;
         }
-        LivingEntity le = (LivingEntity) spawned;
+
+        // B-07 fix: Defer stacking merge until entity spawn is finalized across all plugins.
+        // If another plugin at HIGHEST cancels the spawn, the existing mob stack is NOT modified.
+        plugin.getSchedulerAdapter().runEntityLater(le, () -> tryMergeSpawnedMob(le), 1L);
+    }
+
+    public void tryMergeSpawnedMob(LivingEntity le) {
+        if (!unsafeVirtualMerging) return;
+        if (!enabled || le == null || !le.isValid() || le.isDead() || !isEligible(le)) return;
 
         for (Entity nearby : le.getNearbyEntities(stackRadius, stackRadius, stackRadius)) {
-            if (nearby.getType() != le.getType() || !isEligible(nearby)) continue;
-            LivingEntity nearbyLe = (LivingEntity) nearby;
-            if (le instanceof Ageable ageA && nearbyLe instanceof Ageable ageB && ageA.isAdult() != ageB.isAdult()) {
-                continue;
-            }
+            if (!(nearby instanceof LivingEntity nearbyLe)) continue;
+            if (!isCompatible(le, nearbyLe)) continue;
+
             int currentAmount = getStackAmount(nearbyLe);
             if (currentAmount < maxStackSize) {
                 setStackAmount(nearbyLe, currentAmount + 1);
-                event.setCancelled(true);
+                le.remove();
                 return;
             }
         }
@@ -294,6 +380,7 @@ public final class MobStackerModule implements Listener {
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onEntityDeath(EntityDeathEvent event) {
         LivingEntity entity = event.getEntity();
+        // Existing virtual stacks must still unwind when the scanner is disabled.
         if (!hasStackData(entity)) return;
 
         int amount = getStackAmount(entity);
@@ -347,11 +434,11 @@ public final class MobStackerModule implements Listener {
         if (amount <= 1) return;
 
         event.setCancelled(true);
-        setStackAmount(le, amount - 1);
 
         EntityType type = le.getType();
         Location loc = le.getLocation().add(0.5, 0, 0.5);
         Class<? extends LivingEntity> entityClass = getLivingEntityClass(type);
+        boolean separatedSuccessfully = false;
         if (entityClass != null) {
             try {
                 LivingEntity separated = le.getWorld().spawn(loc, entityClass, spawned -> {
@@ -362,6 +449,8 @@ public final class MobStackerModule implements Listener {
                     }
                 });
                 if (separated != null) {
+                    setStackAmount(le, amount - 1);
+                    separatedSuccessfully = true;
                     plugin.getSchedulerAdapter().runEntityLater(separated, () ->
                             separated.getPersistentDataContainer().remove(noStackKey), 100L);
                 }
@@ -369,6 +458,10 @@ public final class MobStackerModule implements Listener {
             }
         }
 
+        if (!separatedSuccessfully) {
+            player.sendMessage(ChatColor.RED + "Unable to separate this mob here; the stack was left unchanged.");
+            return;
+        }
         String msg = mobSeparatedMessage == null ? "" : mobSeparatedMessage.replace("%amount%", String.valueOf(amount - 1));
         if (!msg.isBlank()) {
             player.sendMessage(ChatColor.translateAlternateColorCodes('&', msg));
@@ -380,11 +473,28 @@ public final class MobStackerModule implements Listener {
         PersistentDataContainer pdc = entity.getPersistentDataContainer();
         if (amount <= 1) {
             pdc.remove(stackKey);
-            entity.setCustomName(null);
-            entity.setCustomNameVisible(false);
+            String original = pdc.get(originalNameKey, PersistentDataType.STRING);
+            Byte visible = pdc.get(originalNameVisibleKey, PersistentDataType.BYTE);
+            if (original != null) {
+                entity.setCustomName(original);
+                entity.setCustomNameVisible(visible != null && visible != 0);
+            } else if (entity.getCustomName() != null
+                    && ChatColor.stripColor(entity.getCustomName()).matches(
+                            "(?i)" + entity.getType().name().replace('_', ' ') + " X\\d+")) {
+                // Old virtual stacks have no original-name snapshot. Clear only our label.
+                entity.setCustomName(null);
+                entity.setCustomNameVisible(false);
+            }
+            pdc.remove(originalNameKey);
+            pdc.remove(originalNameVisibleKey);
             return;
         }
 
+        if (!pdc.has(stackKey, PersistentDataType.INTEGER) && entity.getCustomName() != null) {
+            pdc.set(originalNameKey, PersistentDataType.STRING, entity.getCustomName());
+            pdc.set(originalNameVisibleKey, PersistentDataType.BYTE,
+                    (byte) (entity.isCustomNameVisible() ? 1 : 0));
+        }
         int safeAmount = Math.min(maxStackSize, amount);
         pdc.set(stackKey, PersistentDataType.INTEGER, safeAmount);
 

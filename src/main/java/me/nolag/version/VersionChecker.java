@@ -24,6 +24,8 @@ public final class VersionChecker {
         LinkedHashSet<String> versions = new LinkedHashSet<>();
 
 
+        versions.add("1.21");
+        versions.add("1.21.0");
         versions.add("1.21.1");
         versions.add("1.21.2");
         versions.add("1.21.3");
@@ -125,7 +127,11 @@ public final class VersionChecker {
 
 
     private static boolean checkSupported(String version, int major, int minor, int patch) {
-        return version != null && SUPPORTED_VERSIONS.contains(version.trim());
+        if (version == null) {
+            return false;
+        }
+        // A version not explicitly tested must not be represented as supported.
+        return SUPPORTED_VERSIONS.contains(version.trim());
     }
 
     public boolean isSupported() {
@@ -138,7 +144,11 @@ public final class VersionChecker {
         }
 
         String normalized = version.trim();
-        return SUPPORTED_VERSIONS.contains(normalized);
+        if (SUPPORTED_VERSIONS.contains(normalized)) {
+            return true;
+        }
+        int[] parsed = parseVersion(normalized);
+        return checkSupported(normalized, parsed[0], parsed[1], parsed[2]);
     }
 
     public static Set<String> getSupportedVersions() {

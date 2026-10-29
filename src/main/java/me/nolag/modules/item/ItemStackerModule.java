@@ -33,31 +33,51 @@ public final class ItemStackerModule implements Listener {
         this.enabled = plugin.getConfig().getBoolean("features.item-stacker", true);
     }
 
-    @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onItemSpawn(ItemSpawnEvent event) {
         if (!enabled) {
             return;
         }
 
+        // Do not inspect other region-owned entities during an entity callback on Folia.
+        if (plugin.getSchedulerAdapter().isFolia()) return;
         Item newItem = event.getEntity();
-        if (newItem == null || !newItem.isValid()) {
+        if (newItem == null) {
             return;
         }
 
         ItemStack stack = newItem.getItemStack();
         int maxStackSize = stack.getMaxStackSize();
+        if (maxStackSize <= 1 || stack.getAmount() >= maxStackSize) {
+            return;
+        }
 
+        // K-01 fix: Do not mutate or delete existing in-world items during the spawn event pipeline.
+        // If a higher priority listener or another plugin cancels ItemSpawnEvent later,
+        // prematurely removing the existing item causes irreversible item loss.
+        // We schedule the merge resolution once the item spawn has definitively succeeded.
+        plugin.getSchedulerAdapter().runEntityLater(newItem, () -> mergeSpawnedItem(newItem), 1L);
+    }
+
+    public void mergeSpawnedItem(Item newItem) {
+        if (!enabled || plugin.getSchedulerAdapter().isFolia() || newItem == null || !newItem.isValid() || newItem.isDead()) {
+            return;
+        }
+
+        ItemStack stack = newItem.getItemStack();
+        int maxStackSize = stack.getMaxStackSize();
         if (maxStackSize <= 1 || stack.getAmount() >= maxStackSize) {
             return;
         }
 
         boolean folia = plugin.getSchedulerAdapter().isFolia();
-        Location origin = folia ? newItem.getLocation() : null;
+        Location origin = newItem.getLocation();
         Iterable<Entity> candidates;
         if (folia) {
-
-
             Chunk ownerChunk = origin.getChunk();
+            if (!ownerChunk.isLoaded()) {
+                return;
+            }
             candidates = Arrays.asList(ownerChunk.getEntities());
         } else {
             candidates = newItem.getNearbyEntities(2.0, 2.0, 2.0);
@@ -100,11 +120,14 @@ public final class ItemStackerModule implements Listener {
                             long expireB = b != null ? b : now + lifetime;
                             long result = Math.max(expireA, expireB);
                             newItem.getPersistentDataContainer().set(expireKey, PersistentDataType.LONG, result);
+                            if (plugin.getItemExpiryModule() != null) plugin.getItemExpiryModule().updateExpiry(newItem, result);
                         } catch (Throwable e) {
-
                             plugin.getLogger().fine("Failed to merge item expiry data: " + e.getMessage());
                         }
 
+                        // Commit destination quantity before removing source. An exception
+                        // must never leave the existing item deleted without a destination.
+                        newItem.setItemStack(stack);
                         if (plugin.getItemExpiryModule() != null) {
                             plugin.getItemExpiryModule().unregisterItem(other.getUniqueId());
                         }
@@ -113,6 +136,7 @@ public final class ItemStackerModule implements Listener {
                         stack.setAmount(maxStackSize);
                         newItem.setPickupDelay(minDelay);
                         otherStack.setAmount(total - maxStackSize);
+                        newItem.setItemStack(stack);
                         other.setItemStack(otherStack);
                         try {
                             Long a = newItem.getPersistentDataContainer().get(expireKey, PersistentDataType.LONG);
@@ -125,9 +149,10 @@ public final class ItemStackerModule implements Listener {
                             long expireB = b != null ? b : now + lifetime;
                             long result = Math.max(expireA, expireB);
                             newItem.getPersistentDataContainer().set(expireKey, PersistentDataType.LONG, result);
+                            if (plugin.getItemExpiryModule() != null) plugin.getItemExpiryModule().updateExpiry(newItem, result);
                             other.getPersistentDataContainer().set(expireKey, PersistentDataType.LONG, result);
+                            if (plugin.getItemExpiryModule() != null) plugin.getItemExpiryModule().updateExpiry(other, result);
                         } catch (Throwable e) {
-
                             plugin.getLogger().fine("Failed to update item expiry data during split: " + e.getMessage());
                         }
                     }
